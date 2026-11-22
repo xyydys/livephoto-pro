@@ -36,7 +36,7 @@ jobs:
         run: |
           app="$RUNNER_TEMP/livephoto-build/Build/Products/Release-iphoneos/LivePhotoPreserve.app"
           executable=$(plutil -extract CFBundleExecutable raw "$app/Info.plist")
-          xcrun lipo -verify_arch arm64 "$app/$executable"
+          xcrun lipo "$app/$executable" -verify_arch arm64
 
           package="$RUNNER_TEMP/livephoto-package"
           mkdir -p "$package/Payload"
