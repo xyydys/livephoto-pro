@@ -1,25 +1,33 @@
-# 实况原画 · LivePhoto Pro
+# 实况原画 · LivePhoto Pro (v2.0)
 
-把短视频保存为系统相册中的 Live Photo。转换器直接将兼容视频的压缩样本写入配对 MOV，再用原视频的首个显示帧生成封面。视频路径没有重新编码、缩放或补帧环节。导入和转换在设备上完成，无需账号或上传。
+把高清视频无损保存为 iOS 系统相册中的 Live Photo（实况照片）。转换器直接将兼容视频（H.264 / HEVC）的压缩样本比特级直通写入配对 MOV，没有重新编码、画质劣化或补帧环节；同时突破了传统 3 秒时长限制，并从 iOS 系统底层强制撤销了实况照片播放时的默认放大效果。
+
+## 核心特性
+
+1. **1:1 强制撤销实况播放默认放大**：
+   - 在 iOS 系统底层框架 `PhotosPlayer.framework`（`-[ISLivePhotoPlayer _updateScaleIfNeeded]`）中，当 `playerContent.supportsVitality` 为 `true` 时，系统会在长按播放实况照片时默认施加 `0.3s` 的 `1.075x`（放大 7.5%）镜头推进缩放。
+   - 本项目通过向配对 MOV 容器层注入 `mdta/com.apple.quicktime.live-photo.vitality-disabled = 1` 与 `com.apple.quicktime.live-photo.transition-vitality-score.v1 = 0.0` 元数据，使 `PhotosFormats.PFMetadataMovie.hasVitality` 返回 `false`，从而强制 `ISLivePhotoPlayer` 在播放时保持 `scale = 1.0`（1:1 原画比例，零放大），并且以 `AVAssetImageGenerator.ApertureMode.encodedPixels` 采样静态封面，实现与直接播放原视频一致的画面比例。
+2. **突破 3 秒时长限制 & 自由区间截取**：
+   - 支持将任意完整时长的视频（如 5 秒、10 秒、30 秒或更长）直接转为实况照片，也支持在时间轴工作台上自由截取指定起止区间或快速选择 `3 秒 / 5 秒 / 10 秒 / 完整全长` 预设。
+3. **首帧零跳动封面 & 任意自选封面帧**：
+   - 默认以片段首帧（`0.0s`）作为静态封面，实现从封面过渡到播放时零跳帧；也支持通过胶片缩略图时间轴自由拾取任意时间戳作为封面帧（Key Photo），并支持 `JPEG (100% 质量)` 与 `HEIC` 两种封面格式。
+4. **高帧率满帧播放 & 智能音轨处理**：
+   - 自动写入 `com.apple.quicktime.full-frame-rate-playback-intent = 1` 保留 60fps / 120fps 高刷丝滑度；AAC 音轨零重编码直通，PCM 等非 AAC 音轨自动智能转封装为高码率 AAC-LC（亦可一键静音导出）。
+5. **Liquid Glass（液态玻璃）界面与随影流光背景变换**：
+   - 采用 iOS 17+ 现代 SwiftUI 构建，融合高光折射边缘的液态玻璃卡片、内置 `PHLivePhotoView` 真机级长按实况预览舞台，以及可根据视频画面色彩实时演化的动态流体极光背景（支持「随影流光」「深海极光」「琥珀流金」「冰川琉璃」四大主题）。
 
 ## 在 iPhone 上运行
 
-1. 在 Xcode 15 或更新版本打开 `LivePhotoPreserve.xcodeproj`，选择 `LivePhotoPreserve` scheme。
-2. 在目标的 **Signing & Capabilities** 中选择自己的 Team，连接运行 iOS 15 或更新版本的 iPhone，再运行 App。如签名提示标识符冲突，可在 `LivePhotoPreserve.xcconfig` 改成自己的 Bundle Identifier。
-3. 从「文件」或「照片」选取预先剪好的短片，点「转换并存入相册」，允许添加照片。然后到「照片」的「实况照片」中查看。
-
-首版接收最长 3.1 秒的单轨 H.264 或 HEVC 视频，可含单轨 AAC-LC 音频。支持常见的直拍方向和 90° 倍数旋转。对无法直通封装的素材，App 会显示错误。从「文件」导入会直接复制所选文件。照片选择器请求 `.current` 表示，可能取得相册编辑后的版本。要与手上的源文件逐帧对比，使用「文件」导入。
-
-静态封面使用 JPEG，亮度可能与 HDR 视频画面不同。MOV 封装会重新生成，特殊的轨道级显示属性和附加元数据可能有差异。系统「照片」和其他支持 Live Photo 的 App 各自决定播放时的缩放、过渡和帧调度。通过特定平台分享时，也取决于该平台是否保留配对视频资源。
+1. 在 Xcode 15 / 16 或更新版本打开 `LivePhotoPreserve.xcodeproj`，选择 `LivePhotoPreserve` scheme。
+2. 在目标的 **Signing & Capabilities** 中选择自己的 Team，连接运行 iOS 17 或更新版本的 iPhone，再运行 App。如签名提示标识符冲突，可在 `LivePhotoPreserve.xcconfig` 改成自己的 Bundle Identifier。
+3. 从「相册」或「文件」导入高清视频，按需调整时长区间、封面帧与 1:1 防缩放开关，可先点「生成实况并在 App 内预览」长按测试，或直接点「转换并存入系统相册」。
 
 ## 验证导出的视频
 
-用「文件」导入一段固定构图、四角有标记的短片。可在「照片」和目标 App 观察从首帧过渡到播放时四角是否移动、动起来时细节是否变化。要判断转换后的文件是否保留了视频数据，可将生成的实况同步到 Mac 的「照片」，选中并在「文件」→「导出」→「导出未修改的原片」取到配对 MOV。不要使用「存储为视频」取样。
-
-安装 Python 3 和 `ffprobe`（随 FFmpeg 提供）后运行：
+用「文件」导入一段固定构图、四角有标记的短片。可在「照片」或应用内实况预览中观察从首帧过渡到长按播放时四角是否发生任何缩放位移。要校验转换后的文件是否完好保留了原始压缩视频流，可导出配对 MOV 并运行：
 
 ```sh
 python3 scripts/verify-video.py source.mp4 exported-paired.mov
 ```
 
-脚本对比压缩视频包的 SHA-256、相对显示和解码时间、分辨率、方向、有效画幅与色彩参数。它接受整体时间戳平移，会报告时间基换算后的精确差异。退出码 `0` 表示所比较字段一致，`1` 表示发现差异，`2` 表示无法完成检查。报告中的变化需要结合字段判断，封装有变化时也可能出现差异。
+脚本对比压缩视频包的 SHA-256、相对显示和解码时间、分辨率、方向、有效画幅与色彩参数。退出码 `0` 表示压缩视频样本与几何属性完全一致。

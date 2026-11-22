@@ -1,12 +1,13 @@
 CODE_SIGN_STYLE = Automatic
-CURRENT_PROJECT_VERSION = 1
+CURRENT_PROJECT_VERSION = 2
 GENERATE_INFOPLIST_FILE = YES
-INFOPLIST_KEY_CFBundleDisplayName = 实况原画
-INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = 将生成的实况照片保存到系统相册。
+INFOPLIST_KEY_CFBundleDisplayName = 实况原画 Pro
+INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = 将生成的无损实况照片保存到系统相册。
+INFOPLIST_KEY_NSPhotoLibraryUsageDescription = 从系统相册导入高清视频并在应用内预览实况照片。
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
 INFOPLIST_KEY_UILaunchScreen_Generation = YES
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks
-MARKETING_VERSION = 0.1.0
+MARKETING_VERSION = 2.0.0
 PRODUCT_BUNDLE_IDENTIFIER = io.github.xyydys.LivePhotoPreserve
 PRODUCT_NAME = $(TARGET_NAME)
 SUPPORTED_PLATFORMS = iphoneos iphonesimulator
