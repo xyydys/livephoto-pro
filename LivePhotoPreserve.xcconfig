@@ -1,5 +1,5 @@
 CODE_SIGN_STYLE = Automatic
-CURRENT_PROJECT_VERSION = 2
+CURRENT_PROJECT_VERSION = 3
 GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_KEY_CFBundleDisplayName = 实况原画 Pro
 INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = 将生成的无损实况照片保存到系统相册。

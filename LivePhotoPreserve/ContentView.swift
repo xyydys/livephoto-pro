@@ -187,7 +187,12 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Namespace private var clipNavigation
-    @State private var editorOpen = false
+    private struct EditorRoute: Hashable {
+        let sourceID: String?
+    }
+
+    @State private var editorPath: [EditorRoute] = []
+    private var editorOpen: Bool { !editorPath.isEmpty }
     @State private var transitionID: String?
     @State private var library = VideoLibrary()
     @State private var albumID: String?
@@ -216,16 +221,13 @@ struct ContentView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $editorPath) {
             pickerHome
                 .toolbar(.hidden, for: .navigationBar)
-                .navigationDestination(isPresented: $editorOpen) {
-                    if #available(iOS 18.0, *), let transitionID, !reduceMotion {
-                        editor.toolbar(.hidden, for: .navigationBar)
-                            .navigationTransition(.zoom(sourceID: transitionID, in: clipNavigation))
-                    } else {
-                        editor.toolbar(.hidden, for: .navigationBar)
-                    }
+                .navigationDestination(for: EditorRoute.self) { route in
+                    EditorDestination { dismiss in editor(onBack: dismiss) }
+                        .toolbar(.hidden, for: .navigationBar)
+                        .editorTransition(sourceID: reduceMotion ? nil : route.sourceID, in: clipNavigation)
                 }
         }
         .sheet(isPresented: $showsPhotoPicker) {
@@ -354,6 +356,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
+            .allowsHitTesting(!isWorking)
             Button {
                 showsFilePicker = true
             } label: {
@@ -363,6 +366,7 @@ struct ContentView: View {
             }
             .buttonStyle(.plain).studioGlass(Capsule())
             .padding(.bottom, 10)
+            .disabled(isWorking)
             if !editorOpen { statusOverlay.padding(.bottom, 68) }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
@@ -415,23 +419,23 @@ struct ContentView: View {
         .allowsHitTesting(false)
     }
 
-    private var editor: some View {
-        ZStack(alignment: .bottom) {
+    private func editor(onBack: @escaping () -> Void) -> some View {
+        ZStack {
             studioBackground
-            GeometryReader { geo in
-                ScrollView {
-                    VStack(spacing: 13) {
-                        previewStage(height: max(215, geo.size.height - 190))
-                        if let specification { filmstrip(specification) }
-                        editorDock
-                    }
-                    .frame(maxWidth: 720)
-                    .frame(maxWidth: .infinity)
-                    .padding(.bottom, 10)
+            VStack(spacing: 0) {
+                previewStage(onBack: onBack)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 7) {
+                    if let specification { filmstrip(specification) }
+                    editorDock
                 }
-                .scrollIndicators(.hidden)
+                .padding(.top, 9)
+                .padding(.bottom, 3)
+                .frame(maxWidth: 720)
+                .frame(maxWidth: .infinity)
+                .background(.bar)
             }
-            statusOverlay.padding(.bottom, 74)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: useCustomCoverTime ? customCoverTimeSeconds : nil) {
             guard editingCover, useCustomCoverTime, let url = source?.url else { return }
@@ -445,42 +449,26 @@ struct ContentView: View {
         .onDisappear { stopPlayback() }
     }
 
-    private func previewStage(height: CGFloat) -> some View {
-        ZStack(alignment: .top) {
-            ZStack {
-                Color.black.opacity(0.85)
-                if stageMode == .livePhoto, let generatedLivePhoto {
-                    LivePhotoPreviewView(livePhoto: generatedLivePhoto, isMuted: !export.audio,
-                                         playbackTrigger: livePhotoPlaybackTrigger)
-                } else if let player {
-                    if let poster = specification?.thumbnails.first {
-                        Image(decorative: poster, scale: 1).resizable().scaledToFit()
-                            .accessibilityHidden(true)
-                    }
-                    OriginalVideoSurface(player: player)
-                }
-            }
-            .frame(height: height)
-            .frame(maxWidth: .infinity)
-            .clipped()
-            .overlay(alignment: .bottomLeading) {
-                Button(action: togglePlayback) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 45, height: 45)
-                }
-                .buttonStyle(.plain).studioGlass(Circle())
-                .foregroundStyle(.white).environment(\.colorScheme, .dark)
-                .padding(16).accessibilityLabel(isPlaying ? "暂停" : "播放")
-            }
+    private func previewStage(onBack: @escaping () -> Void) -> some View {
+        ZStack {
+            previewMedia
+                .ignoresSafeArea(.container, edges: .top)
+                .accessibilityHidden(stageMode == .video)
+        }
+        .overlay(alignment: .top) {
             HStack(spacing: 8) {
                 Button {
                     stopPlayback()
-                    editorOpen = false
+                    onBack()
                 } label: {
-                    Image(systemName: "chevron.left").frame(width: 44, height: 44)
+                    Image(systemName: "chevron.left")
+                        .frame(width: 48, height: 48)
+                        .contentShape(Rectangle())
+                        .studioGlass(Circle())
                 }
-                .buttonStyle(.plain).studioGlass(Circle()).accessibilityLabel("返回视频")
-                .disabled(isWorking)
+                .buttonStyle(.plain)
+                .accessibilityLabel("返回视频")
+                .accessibilityIdentifier("editor.back")
                 Spacer(minLength: 4)
                 Menu {
                     Button("预览实况", systemImage: "livephoto") { Task { await convertForInAppPreviewOnly() } }
@@ -500,6 +488,7 @@ struct ContentView: View {
                     .disabled(generatedFiles == nil)
                 } label: {
                     Image(systemName: "ellipsis").frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                         .studioGlass(Circle())
                 }
                 .buttonStyle(.plain).accessibilityLabel("更多")
@@ -510,8 +499,10 @@ struct ContentView: View {
                     Label("保存", systemImage: "square.and.arrow.up")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 14).frame(height: 44)
+                        .contentShape(Rectangle())
+                        .studioGlass(Capsule())
                 }
-                .buttonStyle(.plain).studioGlass(Capsule())
+                .buttonStyle(.plain)
                 .disabled(isWorking)
             }
             .padding(.horizontal, 15).padding(.top, 8)
@@ -521,7 +512,53 @@ struct ContentView: View {
                     .frame(height: 100).allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .bottomLeading) {
+            Button(action: togglePlayback) {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .frame(width: 45, height: 45)
+                    .contentShape(Rectangle())
+                    .studioGlass(Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white).environment(\.colorScheme, .dark)
+            .padding(15).accessibilityLabel(isPlaying ? "暂停" : "播放")
+            .disabled(isWorking)
+        }
+        .overlay(alignment: .bottom) {
+            statusOverlay.padding(.horizontal, 58).padding(.bottom, 18)
+                .allowsHitTesting(feedback?.icon == "exclamationmark.triangle.fill")
+        }
         .accessibilityElement(children: .contain)
+    }
+
+    private var previewMedia: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                // An ambient bleed fills the margins; the actual media never uses aspect fill.
+                if let poster = specification?.thumbnails.first {
+                    Image(decorative: poster, scale: 1).resizable().scaledToFill()
+                        .frame(width: geometry.size.width + 56, height: geometry.size.height + 56)
+                        .blur(radius: 24).opacity(0.55)
+                        .accessibilityHidden(true)
+                }
+                if stageMode == .livePhoto, let generatedLivePhoto {
+                    LivePhotoPreviewView(livePhoto: generatedLivePhoto, isMuted: !export.audio,
+                                         playbackTrigger: livePhotoPlaybackTrigger)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                } else if let player {
+                    if let poster = specification?.thumbnails.first {
+                        Image(decorative: poster, scale: 1).resizable().scaledToFit()
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .accessibilityHidden(true)
+                    }
+                    OriginalVideoSurface(player: player)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+        }
     }
 
     private var editorDock: some View {
@@ -864,7 +901,7 @@ struct ContentView: View {
                     activeAmbientPalette = spec.ambientPalette
                 }
                 isWorking = false
-                editorOpen = true
+                editorPath.append(EditorRoute(sourceID: transitionID))
             } catch {
                 imported.remove()
                 isWorking = false
@@ -1150,7 +1187,22 @@ private func makeTemporaryDirectory() throws -> URL {
     return directory
 }
 
+private struct EditorDestination<Content: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    let content: (@escaping () -> Void) -> Content
+
+    var body: some View {
+        content { dismiss() }
+    }
+}
+
 private extension View {
+    @ViewBuilder func editorTransition(sourceID: String?, in namespace: Namespace.ID) -> some View {
+        if #available(iOS 18.0, *), let sourceID {
+            navigationTransition(.zoom(sourceID: sourceID, in: namespace))
+        } else { self }
+    }
+
     @ViewBuilder func studioGlass<S: Shape>(_ shape: S) -> some View {
         if #available(iOS 26.0, *) {
             self.glassEffect(.regular.interactive(), in: shape)
