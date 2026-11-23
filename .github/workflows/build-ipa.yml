@@ -15,13 +15,23 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-15
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Build for iPhone and iPad
         run: |
+          xcode_app="$(python3 - <<'PYCODE'
+          import glob
+          import re
+          candidates = glob.glob('/Applications/Xcode_26*.app')
+          if not candidates:
+              raise SystemExit('Xcode 26 is not installed on this runner')
+          print(max(candidates, key=lambda path: tuple(map(int, re.findall(r'\d+', path)))))
+          PYCODE
+          )"
+          export DEVELOPER_DIR="$xcode_app/Contents/Developer"
           xcodebuild -version
           xcodebuild \
             -project LivePhotoPreserve.xcodeproj \
