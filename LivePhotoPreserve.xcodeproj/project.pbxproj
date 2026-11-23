@@ -74,7 +74,7 @@
 		A51E00000000000000000009 = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = ();
+			files = (A51E0000000000000000001A);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		A51E0000000000000000000A = {
@@ -86,7 +86,7 @@
 		};
 		A51E0000000000000000000B = {
 			isa = PBXGroup;
-			children = (A51E0000000000000000000C, A51E0000000000000000000D, A51E0000000000000000000E);
+			children = (A51E0000000000000000000C, A51E0000000000000000000D, A51E0000000000000000000E, A51E00000000000000000019);
 			path = LivePhotoPreserve;
 			sourceTree = "<group>";
 		};
@@ -96,6 +96,8 @@
 		A51E00000000000000000010 = { isa = PBXBuildFile; fileRef = A51E0000000000000000000C; };
 		A51E00000000000000000011 = { isa = PBXBuildFile; fileRef = A51E0000000000000000000D; };
 		A51E00000000000000000012 = { isa = PBXBuildFile; fileRef = A51E0000000000000000000E; };
+		A51E00000000000000000019 = { isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A51E0000000000000000001A = { isa = PBXBuildFile; fileRef = A51E00000000000000000019; };
 		A51E00000000000000000014 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {

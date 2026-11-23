@@ -195,8 +195,6 @@ struct ContentView: View {
     private var editorOpen: Bool { !editorPath.isEmpty }
     @State private var library = VideoLibrary()
     @State private var albumID: String?
-    @State private var firstGridHasEntered = false
-    @State private var visibleRowsSettled = false
     @State private var showsExportSheet = false
     @State private var advancedDefaults = false
     @State private var advancedExport = false
@@ -257,130 +255,157 @@ struct ContentView: View {
         .sheet(isPresented: $showsExportSheet) { exportPanel }
         .sheet(isPresented: $showsShareSheet) { ActivityShareSheet(activityItems: shareItems) }
         .onChange(of: editorOpen) { _, opened in
-            if !opened { stopPlayback() }
+            if !opened { stopPlayback(); feedback = nil }
+        }
+        .task(id: feedback?.id) {
+            guard let notice = feedback, notice.icon != "exclamationmark.triangle.fill" else { return }
+            do { try await Task.sleep(for: .milliseconds(1500)) } catch { return }
+            guard feedback?.id == notice.id else { return }
+            withAnimation(.easeOut(duration: 0.18)) { feedback = nil }
         }
         .onDisappear { stopPlayback() }
         .task { library.refresh() }
     }
 
     private var pickerHome: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             studioBackground
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("LIVEPHOTO PRO")
-                        .font(.caption.weight(.semibold)).tracking(3)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        advancedDefaults = false
-                        showsSettingsSheet = true
-                    } label: {
-                        Image(systemName: "gearshape").font(.system(size: 19))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.plain).studioGlass(Circle())
-                    .accessibilityLabel("设置")
-                }
-                HStack {
-                    Text("视频").font(.largeTitle.bold())
-                    Spacer()
-                    Menu {
-                        Button("所有视频") { albumID = nil; library.refresh() }
-                        ForEach(library.albums, id: \.localIdentifier) { album in
-                            Button(album.localizedTitle ?? "相簿") {
-                                albumID = album.localIdentifier
-                                library.refresh(in: album)
-                            }
-                        }
-                        Divider()
-                        Button("系统照片选择器", systemImage: "photo.on.rectangle") {
-                            showsPhotoPicker = true
-                        }
-                    } label: {
-                        Label("相簿", systemImage: "chevron.down")
-                            .padding(.horizontal, 14).frame(minHeight: 44)
-                            .studioGlass(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-                if library.canBrowse {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            Color.clear.frame(height: 0).id("library-top")
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                                ForEach(library.videos) { entry in
-                                    let index = entry.position
-                                    videoTile(entry)
-                                        .opacity(visibleRowsSettled || index < 3 || index >= 9 || reduceMotion ? 1 : 0.55)
-                                        .animation(index < 9 ? .easeOut(duration: 0.17).delay(Double(index / 3) * 0.025) : nil,
-                                                   value: visibleRowsSettled)
-                                }
-                            }
-                            .padding(.bottom, 8)
-                            if library.videos.isEmpty {
-                                ContentUnavailableView("没有视频", systemImage: "film", description: Text("也可以从「文件」导入。"))
-                            }
-                        }
-                        .scrollIndicators(.hidden)
-                        .onChange(of: albumID) { _, _ in proxy.scrollTo("library-top") }
-                    }
-                    .task(id: library.videos.isEmpty) {
-                        guard !library.videos.isEmpty, !firstGridHasEntered else { return }
-                        firstGridHasEntered = true
-                        try? await Task.sleep(for: .milliseconds(25))
-                        visibleRowsSettled = true
-                    }
-                } else {
-                    Spacer()
-                    VStack(spacing: 14) {
-                        Image(systemName: "play.rectangle").font(.system(size: 35, weight: .light))
-                        Text("选择一段视频").font(.title2.bold())
-                        Button("从照片选择") { showsPhotoPicker = true }
-                            .buttonStyle(.borderedProminent)
-                        if library.canRequest {
-                            Button("在首页显示我的视频") {
-                                Task { await library.requestAccess() }
-                            }
-                        } else {
-                            Button("管理照片权限") {
-                                if let url = URL(string: UIApplication.openSettingsURLString) {
-                                    UIApplication.shared.open(url)
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    Spacer()
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .allowsHitTesting(!isWorking)
+            homeWithEdges
+                .allowsHitTesting(!isWorking)
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                if !editorOpen { statusOverlay }
-                Button {
-                    showsFilePicker = true
-                } label: {
-                    Label("文件", systemImage: "folder")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 21).frame(minHeight: 48)
-                        .contentShape(Rectangle())
-                        .studioGlass(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(isWorking)
-                .accessibilityIdentifier("home.files")
+        .overlay(alignment: .bottom) {
+            if !editorOpen {
+                statusOverlay
+                    .padding(.bottom, 16)
+                    .allowsHitTesting(feedback?.icon == "exclamationmark.triangle.fill")
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
-            .background(Color(uiColor: .systemBackground))
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if !editorOpen { library.refresh(in: library.albums.first { $0.localIdentifier == albumID }) }
         }
+    }
+
+    @ViewBuilder private var homeWithEdges: some View {
+        if #available(iOS 26.0, *) {
+            homeContent
+                .safeAreaBar(edge: .top, spacing: 0) { homeHeader }
+                .safeAreaBar(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: 14).allowsHitTesting(false).accessibilityHidden(true)
+                }
+                .scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            homeContent
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    homeHeader.background(.regularMaterial)
+                }
+        }
+    }
+
+    private var homeHeader: some View {
+        HStack(spacing: 9) {
+            Text("LivePhoto Pro")
+                .font(.largeTitle.bold())
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
+            Menu {
+                Button("所有视频") { albumID = nil; library.refresh() }
+                ForEach(library.albums, id: \.localIdentifier) { album in
+                    Button(album.localizedTitle ?? "相簿") {
+                        albumID = album.localIdentifier
+                        library.refresh(in: album)
+                    }
+                }
+                Divider()
+                Button("系统照片选择器", systemImage: "photo.on.rectangle") { showsPhotoPicker = true }
+                Button("从文件导入", systemImage: "folder") { showsFilePicker = true }
+            } label: {
+                HStack(spacing: 5) {
+                    Text("相簿").font(.subheadline.weight(.semibold))
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+                .studioGlass(Capsule())
+            }
+            .buttonStyle(.plain)
+            Button {
+                advancedDefaults = false
+                showsSettingsSheet = true
+            } label: {
+                circleControl("gearshape")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("设置")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 3)
+        .padding(.bottom, 10)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var homeContent: some View {
+        if library.canBrowse {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Color.clear.frame(height: 0).id("library-top")
+                    if !library.videos.isEmpty {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                            ForEach(library.videos) { entry in
+                                videoTile(entry)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 9)
+                    } else if library.isLoading || !library.hasLoaded {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                            ForEach(0..<9) { _ in
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color(uiColor: .secondarySystemFill))
+                                    .aspectRatio(0.86, contentMode: .fit)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .accessibilityLabel("正在载入视频")
+                    } else {
+                        ContentUnavailableView("没有视频", systemImage: "film",
+                                               description: Text("可从右上角的「相簿」选取视频。"))
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .onChange(of: albumID) { _, _ in proxy.scrollTo("library-top") }
+            }
+        } else {
+            VStack(spacing: 14) {
+                Image(systemName: "play.rectangle").font(.system(size: 35, weight: .light))
+                Text("选择一段视频").font(.title2.bold())
+                Button("从照片选择") { showsPhotoPicker = true }
+                    .buttonStyle(.borderedProminent)
+                if library.canRequest {
+                    Button("在首页显示我的视频") {
+                        Task { await library.requestAccess() }
+                    }
+                } else {
+                    Button("管理照片权限") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func circleControl(_ symbol: String) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 18, weight: .semibold))
+            .imageScale(.medium)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
+            .studioGlass(Circle())
     }
 
     @ViewBuilder
@@ -398,7 +423,9 @@ struct ContentView: View {
                 await finishImport(result, assetID: id)
             }
         } label: {
-            LibraryThumbnail(asset: entry.asset, assetID: id)
+            LibraryThumbnail(asset: entry.asset, assetID: id,
+                             entrance: library.entranceRank(for: id),
+                             didEnter: { library.markEntered(id) })
                 .aspectRatio(0.86, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .contentShape(Rectangle())
@@ -430,7 +457,7 @@ struct ContentView: View {
 
     private func editor(onBack: @escaping () -> Void) -> some View {
         ZStack {
-            studioBackground
+            Color(uiColor: .systemBackground).ignoresSafeArea()
             VStack(spacing: 0) {
                 previewStage(onBack: onBack)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -483,10 +510,7 @@ struct ContentView: View {
                     stopPlayback()
                     onBack()
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .frame(width: 48, height: 48)
-                        .contentShape(Rectangle())
-                        .studioGlass(Circle())
+                    circleControl("chevron.left")
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("返回视频")
@@ -509,18 +533,18 @@ struct ContentView: View {
                     }
                     .disabled(generatedFiles == nil)
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                        .studioGlass(Circle())
+                    circleControl("ellipsis")
                 }
                 .buttonStyle(.plain).accessibilityLabel("更多")
                 .disabled(isWorking)
                 Button {
                     Task { await convertAndSaveToPhotos() }
                 } label: {
-                    Label("保存", systemImage: "square.and.arrow.up")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14).frame(height: 44)
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.arrow.up").font(.system(size: 18, weight: .semibold))
+                        Text("保存").font(.subheadline.weight(.semibold))
+                    }
+                        .padding(.horizontal, 13).frame(height: 44)
                         .contentShape(Rectangle())
                         .studioGlass(Capsule())
                 }
@@ -532,10 +556,7 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottomLeading) {
             Button(action: togglePlayback) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                    .frame(width: 45, height: 45)
-                    .contentShape(Rectangle())
-                    .studioGlass(Circle())
+                circleControl(isPlaying ? "pause.fill" : "play.fill")
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white).environment(\.colorScheme, .dark)
@@ -552,25 +573,24 @@ struct ContentView: View {
     private var previewMedia: some View {
         GeometryReader { geometry in
             ZStack {
-                // No rectangular scrim or duplicate thumbnail behind the active video layer.
-                Color.black
-                if dynamicBackgroundMotion, let tone = currentPalette.first {
-                    RadialGradient(colors: [Color(red: tone.r, green: tone.g, blue: tone.b).opacity(0.38), .clear],
-                                   center: .center, startRadius: 1, endRadius: 380)
-                        .allowsHitTesting(false)
-                }
+                Color(uiColor: .systemBackground)
                 if stageMode == .livePhoto, let generatedLivePhoto {
                     LivePhotoPreviewView(livePhoto: generatedLivePhoto, isMuted: !export.audio,
-                                         playbackTrigger: livePhotoPlaybackTrigger)
+                                         playbackTrigger: livePhotoPlaybackTrigger, fillsPortrait: fillsPortrait)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else if let player {
-                    OriginalVideoSurface(player: player)
+                    OriginalVideoSurface(player: player, fillsPortrait: fillsPortrait)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .clipped()
         }
+    }
+
+    private var fillsPortrait: Bool {
+        guard let size = specification?.naturalSize, size.height > 0 else { return false }
+        return abs(size.width / size.height - 9.0 / 16.0) < 0.012
     }
 
     private var editorDock: some View {
@@ -617,7 +637,7 @@ struct ContentView: View {
             Image(systemName: icon).font(.system(size: 18, weight: .medium))
             Text(title).font(.caption2.weight(.medium))
         }
-        .frame(minWidth: 49, minHeight: 44)
+        .frame(width: 57, height: 44)
         .contentShape(Rectangle())
     }
 
@@ -1046,6 +1066,7 @@ struct ContentView: View {
     }
 
     private struct Feedback {
+        let id = UUID()
         let text: String
         let icon: String
         let color: Color
@@ -1064,6 +1085,7 @@ private struct LivePhotoPreviewView: UIViewRepresentable {
     let livePhoto: PHLivePhoto
     let isMuted: Bool
     let playbackTrigger: Int
+    let fillsPortrait: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -1071,7 +1093,7 @@ private struct LivePhotoPreviewView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PHLivePhotoView {
         let view = PHLivePhotoView()
-        view.contentMode = .scaleAspectFit
+        view.contentMode = fillsPortrait ? .scaleAspectFill : .scaleAspectFit
         view.backgroundColor = .clear
         view.livePhoto = livePhoto
         view.isMuted = isMuted
@@ -1083,6 +1105,7 @@ private struct LivePhotoPreviewView: UIViewRepresentable {
             uiView.livePhoto = livePhoto
         }
         uiView.isMuted = isMuted
+        uiView.contentMode = fillsPortrait ? .scaleAspectFill : .scaleAspectFit
         if context.coordinator.lastPlaybackTrigger != playbackTrigger {
             context.coordinator.lastPlaybackTrigger = playbackTrigger
             uiView.startPlayback(with: .full)
@@ -1249,7 +1272,12 @@ private struct LibraryVideo: Identifiable {
 private final class VideoLibrary {
     private(set) var videos: [LibraryVideo] = []
     private(set) var albums: [PHAssetCollection] = []
+    private(set) var hasLoaded = false
+    private(set) var isLoading = false
     private var status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    @ObservationIgnored private var requestID = UUID()
+    @ObservationIgnored private var entranceIDs: [String: Int] = [:]
+    @ObservationIgnored private var enteredIDs: Set<String> = []
     var canBrowse: Bool { status == .authorized || status == .limited }
     var canRequest: Bool { status == .notDetermined }
 
@@ -1258,31 +1286,65 @@ private final class VideoLibrary {
         refresh()
     }
 
+    func entranceRank(for id: String) -> Int? { enteredIDs.contains(id) ? nil : entranceIDs[id] }
+    func markEntered(_ id: String) { enteredIDs.insert(id) }
+
     func refresh(in album: PHAssetCollection? = nil) {
         status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        guard canBrowse else { videos = []; albums = []; return }
+        let request = UUID()
+        requestID = request
+        guard canBrowse else { videos = []; albums = []; isLoading = false; return }
+        isLoading = true
+        let albumID = album?.localIdentifier
+        Task {
+            let snapshot = await Task.detached(priority: .userInitiated) {
+                Self.snapshot(albumID: albumID)
+            }.value
+            guard requestID == request else { return }
+            if !hasLoaded {
+                entranceIDs = Dictionary(uniqueKeysWithValues: snapshot.videos.prefix(9).map { ($0.id, $0.position) })
+            }
+            if videos.map(\.id) != snapshot.videos.map(\.id) { videos = snapshot.videos }
+            if albumID == nil { albums = snapshot.albums }
+            hasLoaded = true
+            isLoading = false
+        }
+    }
+
+    private struct Snapshot: @unchecked Sendable {
+        // PhotoKit assets and collections are immutable snapshots.
+        let videos: [LibraryVideo]
+        let albums: [PHAssetCollection]
+    }
+
+    nonisolated private static func snapshot(albumID: String?) -> Snapshot {
         let options = PHFetchOptions()
         options.predicate = NSPredicate(format: "mediaType == %d", PHAssetMediaType.video.rawValue)
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        let album = albumID.flatMap { PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [$0], options: nil).firstObject }
         let result = album.map { PHAsset.fetchAssets(in: $0, options: options) }
             ?? PHAsset.fetchAssets(with: options)
-        var items: [LibraryVideo] = []
+        var videos: [LibraryVideo] = []
         result.enumerateObjects { asset, index, _ in
-            items.append(LibraryVideo(id: asset.localIdentifier, asset: asset, position: index))
+            videos.append(LibraryVideo(id: asset.localIdentifier, asset: asset, position: index))
         }
-        if videos.map(\.id) != items.map(\.id) { videos = items }
-        if album == nil {
-            var collections: [PHAssetCollection] = []
+        var albums: [PHAssetCollection] = []
+        if albumID == nil {
             PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
-                .enumerateObjects { collection, _, _ in collections.append(collection) }
-            albums = collections
+                .enumerateObjects { collection, _, _ in albums.append(collection) }
         }
+        return Snapshot(videos: videos, albums: albums)
     }
 }
 
 private struct LibraryThumbnail: View {
     let asset: PHAsset
     let assetID: String
+    let entrance: Int?
+    let didEnter: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = true
+    @State private var entranceTask: Task<Void, Never>?
     @MainActor private static let manager = PHCachingImageManager()
     @MainActor private static let cache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
@@ -1300,7 +1362,11 @@ private struct LibraryThumbnail: View {
                 Color(uiColor: .secondarySystemFill)
                 if let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFill()
-                        .frame(width: proxy.size.width, height: proxy.size.height).clipped()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .scaleEffect(revealed ? 1 : 0.88)
+                        .offset(y: revealed ? 0 : -19)
+                        .opacity(revealed ? 1 : 0)
+                        .clipped().allowsHitTesting(false)
                 } else {
                     Image(systemName: "film").foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1317,7 +1383,7 @@ private struct LibraryThumbnail: View {
         .onAppear {
             guard request == nil else { return }
             if let cached = Self.cache.object(forKey: assetID as NSString) {
-                thumbnail = cached
+                show(cached)
                 return
             }
             let token = UUID()
@@ -1332,7 +1398,7 @@ private struct LibraryThumbnail: View {
                 let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
                 Task { @MainActor in
                     guard requestToken == token else { return }
-                    thumbnail = image
+                    show(image)
                     if !degraded {
                         let pixels = Int(image.size.width * image.size.height * image.scale * image.scale)
                         Self.cache.setObject(image, forKey: assetID as NSString, cost: pixels * 4)
@@ -1341,12 +1407,31 @@ private struct LibraryThumbnail: View {
             }
         }
         .onDisappear {
+            entranceTask?.cancel()
+            entranceTask = nil
+            revealed = true
             requestToken = nil
             if let request { Self.manager.cancelImageRequest(request) }
             request = nil
             thumbnail = nil
         }
         .accessibilityHidden(true)
+    }
+
+    private func show(_ image: UIImage) {
+        guard thumbnail == nil, let entrance, !reduceMotion else {
+            thumbnail = image
+            if reduceMotion { didEnter() }
+            return
+        }
+        revealed = false
+        thumbnail = image
+        didEnter()
+        entranceTask = Task { @MainActor in
+            let stagger = 18 + (entrance / 3) * 30 + (entrance % 3) * 13
+            do { try await Task.sleep(for: .milliseconds(stagger)) } catch { return }
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.79)) { revealed = true }
+        }
     }
 }
 
@@ -1377,17 +1462,20 @@ private extension ImportedVideo {
 
 private struct OriginalVideoSurface: UIViewRepresentable {
     let player: AVPlayer
+    let fillsPortrait: Bool
     final class Surface: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
         var videoLayer: AVPlayerLayer { layer as! AVPlayerLayer }
     }
     func makeUIView(context: Context) -> Surface {
         let surface = Surface()
-        surface.videoLayer.videoGravity = .resizeAspect
+        surface.videoLayer.videoGravity = fillsPortrait ? .resizeAspectFill : .resizeAspect
         surface.videoLayer.player = player
         return surface
     }
     func updateUIView(_ uiView: Surface, context: Context) {
         if uiView.videoLayer.player !== player { uiView.videoLayer.player = player }
+        let gravity: AVLayerVideoGravity = fillsPortrait ? .resizeAspectFill : .resizeAspect
+        if uiView.videoLayer.videoGravity != gravity { uiView.videoLayer.videoGravity = gravity }
     }
 }
