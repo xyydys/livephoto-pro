@@ -250,7 +250,7 @@ struct LivePhotoConverter {
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.1, preferredTimescale: 600)
 
         var thumbnails: [CGImage] = []
-        let count = max(1, thumbnailCount)
+        let count = max(0, thumbnailCount)
         for index in 0..<count {
             let fraction = count == 1 ? 0.0 : Double(index) / Double(count - 1)
             let sampleSeconds = min(max(0.0, duration.seconds * fraction), max(0.0, duration.seconds - 0.02))
@@ -290,7 +290,26 @@ struct LivePhotoConverter {
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
         let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
-        return try? generator.copyCGImage(at: time, actualTime: nil)
+        return try? await generator.image(at: time).image
+    }
+
+    /// Preview-only thumbnails, decoded asynchronously so the editor can open immediately.
+    static func filmstripFrames(at url: URL, duration: Double, count: Int = 8) async -> [CGImage?] {
+        guard duration.isFinite, duration > 0, count > 0 else { return [] }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 272, height: 272)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.22, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = generator.requestedTimeToleranceBefore
+        var frames: [CGImage?] = []
+        for index in 0..<count {
+            guard !Task.isCancelled else { return [] }
+            let fraction = Double(index) / Double(max(1, count - 1))
+            let seconds = min(duration * fraction, max(0, duration - 0.025))
+            let time = CMTime(seconds: seconds, preferredTimescale: 600)
+            frames.append(try? await generator.image(at: time).image)
+        }
+        return frames
     }
 
     /// Extracts a 4-color harmonic palette from any `CGImage` to drive dynamic background morphing.

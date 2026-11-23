@@ -193,7 +193,6 @@ struct ContentView: View {
 
     @State private var editorPath: [EditorRoute] = []
     private var editorOpen: Bool { !editorPath.isEmpty }
-    @State private var transitionID: String?
     @State private var library = VideoLibrary()
     @State private var albumID: String?
     @State private var firstGridHasEntered = false
@@ -206,6 +205,8 @@ struct ContentView: View {
     @State private var isPlaying = false
     @State private var export = ExportPreferences()
     @State private var playbackObserver: Any?
+    @State private var timelineFrames: [CGImage?] = []
+    @State private var lastScrubSeek = 0.0
 
     private struct ExportPreferences {
         var zoomOff = true
@@ -234,7 +235,6 @@ struct ContentView: View {
             VideoPhotoPicker(didStart: {
                 showsPhotoPicker = false
                 feedback = nil
-                transitionID = nil
                 workingStatus = "正在载入视频…"
                 isWorking = true
             }, didFinish: { result in
@@ -243,7 +243,6 @@ struct ContentView: View {
         }
         .fileImporter(isPresented: $showsFilePicker, allowedContentTypes: [.movie, .video]) { result in
             guard case .success(let url) = result else { return }
-            transitionID = nil
             feedback = nil
             workingStatus = "正在载入视频…"
             isWorking = true
@@ -310,14 +309,15 @@ struct ContentView: View {
                         ScrollView {
                             Color.clear.frame(height: 0).id("library-top")
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                                ForEach(Array(library.videos.enumerated()), id: \.offset) { index, asset in
-                                    videoTile(asset).id(asset.localIdentifier)
-                                        .offset(y: visibleRowsSettled || index >= 9 || reduceMotion ? 0 : -CGFloat(index / 3) * 12)
+                                ForEach(library.videos) { entry in
+                                    let index = entry.position
+                                    videoTile(entry)
                                         .opacity(visibleRowsSettled || index < 3 || index >= 9 || reduceMotion ? 1 : 0.55)
-                                        .animation(.easeOut(duration: 0.19).delay(Double(index / 3) * 0.03), value: visibleRowsSettled)
+                                        .animation(index < 9 ? .easeOut(duration: 0.17).delay(Double(index / 3) * 0.025) : nil,
+                                                   value: visibleRowsSettled)
                                 }
                             }
-                            .padding(.bottom, 76)
+                            .padding(.bottom, 8)
                             if library.videos.isEmpty {
                                 ContentUnavailableView("没有视频", systemImage: "film", description: Text("也可以从「文件」导入。"))
                             }
@@ -357,17 +357,26 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .allowsHitTesting(!isWorking)
-            Button {
-                showsFilePicker = true
-            } label: {
-                Label("文件", systemImage: "folder")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 21).frame(height: 48)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                if !editorOpen { statusOverlay }
+                Button {
+                    showsFilePicker = true
+                } label: {
+                    Label("文件", systemImage: "folder")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 21).frame(minHeight: 48)
+                        .contentShape(Rectangle())
+                        .studioGlass(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(isWorking)
+                .accessibilityIdentifier("home.files")
             }
-            .buttonStyle(.plain).studioGlass(Capsule())
-            .padding(.bottom, 10)
-            .disabled(isWorking)
-            if !editorOpen { statusOverlay.padding(.bottom, 68) }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
+            .background(Color(uiColor: .systemBackground))
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             if !editorOpen { library.refresh(in: library.albums.first { $0.localIdentifier == albumID }) }
@@ -375,28 +384,30 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func videoTile(_ asset: PHAsset) -> some View {
+    private func videoTile(_ entry: LibraryVideo) -> some View {
+        let id = entry.id
         let tile = Button {
             guard !isWorking else { return }
-            transitionID = asset.localIdentifier
             feedback = nil
             isWorking = true
             workingStatus = "正在载入视频…"
             Task { @MainActor in
                 let result: Result<ImportedVideo, Error>
-                do { result = .success(try await ImportedVideo.fromPhotoAsset(asset)) }
+                do { result = .success(try await ImportedVideo.fromPhotoAsset(entry.asset)) }
                 catch { result = .failure(error) }
-                await finishImport(result)
+                await finishImport(result, assetID: id)
             }
         } label: {
-            LibraryThumbnail(asset: asset)
+            LibraryThumbnail(asset: entry.asset, assetID: id)
                 .aspectRatio(0.86, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("视频，\(timestamp(asset.duration))")
+        .accessibilityLabel("视频，\(timestamp(entry.asset.duration))")
+        .accessibilityIdentifier("home.video.\(id)")
         if #available(iOS 18.0, *), !reduceMotion {
-            tile.matchedTransitionSource(id: asset.localIdentifier, in: clipNavigation)
+            tile.matchedTransitionSource(id: id, in: clipNavigation)
         } else { tile }
     }
 
@@ -407,12 +418,10 @@ struct ContentView: View {
             LinearGradient(colors: [Color(red: 0.63, green: 0.81, blue: 0.94).opacity(colorScheme == .dark ? 0.15 : 0.47),
                                     Color(uiColor: .systemBackground)], startPoint: .topLeading, endPoint: .bottomTrailing)
             if let tone = palette.first {
-                TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !dynamicBackgroundMotion || reduceMotion)) { context in
-                    let phase = dynamicBackgroundMotion && !reduceMotion
-                        ? sin(context.date.timeIntervalSinceReferenceDate / 4) : 0
-                    RadialGradient(colors: [Color(red: Double(tone.r), green: Double(tone.g), blue: Double(tone.b)).opacity(0.17), .clear],
-                                   center: UnitPoint(x: 0.62 + phase * 0.13, y: 0.22), startRadius: 10, endRadius: 480)
-                }
+                RadialGradient(colors: [Color(red: tone.r, green: tone.g, blue: tone.b).opacity(0.17), .clear],
+                               center: UnitPoint(x: 0.62, y: 0.22), startRadius: 10, endRadius: 480)
+                    .animation(dynamicBackgroundMotion && !reduceMotion ? .easeInOut(duration: 0.35) : nil,
+                               value: palette)
             }
         }
         .ignoresSafeArea()
@@ -425,17 +434,30 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 previewStage(onBack: onBack)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                VStack(spacing: 7) {
-                    if let specification { filmstrip(specification) }
-                    editorDock
+                if let specification {
+                    filmstrip(specification)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                        .background(Color(uiColor: .systemBackground))
                 }
-                .padding(.top, 9)
-                .padding(.bottom, 3)
-                .frame(maxWidth: 720)
-                .frame(maxWidth: .infinity)
-                .background(.bar)
+                Rectangle().fill(Color(uiColor: .separator).opacity(0.4)).frame(height: 1)
+                editorDock
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(uiColor: .systemBackground))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .task(id: source?.url) {
+            guard let url = source?.url, let spec = specification else { return }
+            let frames = await LivePhotoConverter.filmstripFrames(at: url, duration: spec.durationSeconds)
+            guard !Task.isCancelled, source?.url == url else { return }
+            timelineFrames = frames
+            if !useCustomCoverTime { coverPreviewImage = frames.first.flatMap { $0 } }
+            if let first = frames.first.flatMap({ $0 }) {
+                activeAmbientPalette = LivePhotoConverter.extractAmbientPalette(from: first)
+            }
         }
         .task(id: useCustomCoverTime ? customCoverTimeSeconds : nil) {
             guard editingCover, useCustomCoverTime, let url = source?.url else { return }
@@ -507,10 +529,6 @@ struct ContentView: View {
             }
             .padding(.horizontal, 15).padding(.top, 8)
             .foregroundStyle(.white).environment(\.colorScheme, .dark)
-            .background(alignment: .top) {
-                LinearGradient(colors: [.black.opacity(0.5), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 100).allowsHitTesting(false)
-            }
         }
         .overlay(alignment: .bottomLeading) {
             Button(action: togglePlayback) {
@@ -534,24 +552,18 @@ struct ContentView: View {
     private var previewMedia: some View {
         GeometryReader { geometry in
             ZStack {
+                // No rectangular scrim or duplicate thumbnail behind the active video layer.
                 Color.black
-                // An ambient bleed fills the margins; the actual media never uses aspect fill.
-                if let poster = specification?.thumbnails.first {
-                    Image(decorative: poster, scale: 1).resizable().scaledToFill()
-                        .frame(width: geometry.size.width + 56, height: geometry.size.height + 56)
-                        .blur(radius: 24).opacity(0.55)
-                        .accessibilityHidden(true)
+                if dynamicBackgroundMotion, let tone = currentPalette.first {
+                    RadialGradient(colors: [Color(red: tone.r, green: tone.g, blue: tone.b).opacity(0.38), .clear],
+                                   center: .center, startRadius: 1, endRadius: 380)
+                        .allowsHitTesting(false)
                 }
                 if stageMode == .livePhoto, let generatedLivePhoto {
                     LivePhotoPreviewView(livePhoto: generatedLivePhoto, isMuted: !export.audio,
                                          playbackTrigger: livePhotoPlaybackTrigger)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 } else if let player {
-                    if let poster = specification?.thumbnails.first {
-                        Image(decorative: poster, scale: 1).resizable().scaledToFit()
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                            .accessibilityHidden(true)
-                    }
                     OriginalVideoSurface(player: player)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                 }
@@ -606,6 +618,7 @@ struct ContentView: View {
             Text(title).font(.caption2.weight(.medium))
         }
         .frame(minWidth: 49, minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     private func filmstrip(_ spec: VideoSpecification) -> some View {
@@ -627,20 +640,24 @@ struct ContentView: View {
                 let marker = width * CGFloat(min(1, max(0, playhead / total)))
                 ZStack(alignment: .leading) {
                     HStack(spacing: 1) {
-                        ForEach(Array(spec.thumbnails.enumerated()), id: \.offset) { _, frame in
+                        ForEach(0..<8) { index in
                             GeometryReader { box in
-                                Image(decorative: frame, scale: 1)
-                                    .resizable().scaledToFill()
-                                    .frame(width: box.size.width, height: box.size.height).clipped()
+                                if timelineFrames.indices.contains(index), let frame = timelineFrames[index] {
+                                    Image(decorative: frame, scale: 1)
+                                        .resizable().scaledToFill()
+                                        .frame(width: box.size.width, height: box.size.height).clipped()
+                                } else {
+                                    Color(uiColor: .tertiarySystemFill)
+                                }
                             }
                         }
                     }
                     .background(.quaternary)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("strip")).onChanged { value in
-                        scrub(to: Double(value.location.x / width) * total, within: range)
-                    })
+                    .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
+                        .onChanged { scrub(to: Double($0.location.x / width) * total, within: range, live: true) }
+                        .onEnded { scrub(to: Double($0.location.x / width) * total, within: range) })
                     if !editingCover {
                         Color.black.opacity(0.36).frame(width: max(0, start)).allowsHitTesting(false)
                         Color.black.opacity(0.36).frame(width: max(0, width - end)).offset(x: end).allowsHitTesting(false)
@@ -648,7 +665,7 @@ struct ContentView: View {
                         trimHandle(x: end, leading: false, width: width, total: total, range: range)
                     }
                     Rectangle().fill(editingCover ? Color.accentColor : .white)
-                        .frame(width: 2, height: 58).offset(x: marker - 1)
+                        .frame(width: 2, height: 46).offset(x: marker - 1)
                         .allowsHitTesting(false)
                 }
                 .coordinateSpace(name: "strip")
@@ -697,6 +714,9 @@ struct ContentView: View {
                 if generatedFiles != nil { invalidateOutput() }
                 if leading { trimStartSeconds = min(seconds, max(0, trimEndSeconds - 0.1)) }
                 else { trimEndSeconds = max(seconds, min(total, trimStartSeconds + 0.1)) }
+                scrub(to: leading ? trimStartSeconds : trimEndSeconds,
+                      within: trimStartSeconds...trimEndSeconds, live: true)
+            }.onEnded { _ in
                 scrub(to: leading ? trimStartSeconds : trimEndSeconds,
                       within: trimStartSeconds...trimEndSeconds)
             })
@@ -802,20 +822,25 @@ struct ContentView: View {
         seekPlayer(to: playhead)
     }
 
-    private func scrub(to seconds: Double, within range: ClosedRange<Double>) {
-        stopPlayback()
+    private func scrub(to seconds: Double, within range: ClosedRange<Double>, live: Bool = false) {
+        if isPlaying { stopPlayback() }
         let time = min(max(seconds, range.lowerBound), range.upperBound)
         playhead = time
         stageMode = .video
-        seekPlayer(to: time)
+        let now = ProcessInfo.processInfo.systemUptime
+        if !live || now - lastScrubSeek >= 0.075 {
+            lastScrubSeek = now
+            seekPlayer(to: time, approximate: live)
+        }
         if editingCover {
             if generatedFiles != nil { invalidateOutput() }
             useCustomCoverTime = true
             customCoverTimeSeconds = min(time, max(range.lowerBound, range.upperBound - 0.02))
-            let frames = specification?.thumbnails ?? []
-            if !frames.isEmpty, let duration = specification?.durationSeconds, duration > 0 {
-                let index = Int((customCoverTimeSeconds / duration * Double(frames.count - 1)).rounded())
-                coverPreviewImage = frames[min(frames.count - 1, max(0, index))]
+            if !timelineFrames.isEmpty, let duration = specification?.durationSeconds, duration > 0 {
+                let index = Int((customCoverTimeSeconds / duration * Double(timelineFrames.count - 1)).rounded())
+                if let frame = timelineFrames[min(timelineFrames.count - 1, max(0, index))] {
+                    coverPreviewImage = frame
+                }
             }
         }
     }
@@ -852,7 +877,7 @@ struct ContentView: View {
         player.isMuted = !export.audio
         player.play()
         playbackObserver = player.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main
+            forInterval: CMTime(seconds: 0.10, preferredTimescale: 600), queue: .main
         ) { time in
             Task { @MainActor in
                 guard isPlaying, time.seconds.isFinite else { return }
@@ -866,19 +891,21 @@ struct ContentView: View {
 
     // MARK: - Actions & Helpers
 
-    private func seekPlayer(to seconds: Double) {
+    private func seekPlayer(to seconds: Double, approximate: Bool = false) {
         let time = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
-        player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+        let tolerance = approximate ? CMTime(seconds: 0.12, preferredTimescale: 600) : .zero
+        player?.currentItem?.cancelPendingSeeks()
+        player?.seek(to: time, toleranceBefore: tolerance, toleranceAfter: tolerance)
     }
 
     @MainActor
-    private func finishImport(_ result: Result<ImportedVideo, Error>) async {
+    private func finishImport(_ result: Result<ImportedVideo, Error>, assetID: String? = nil) async {
         showsPhotoPicker = false
         switch result {
         case .success(let imported):
             workingStatus = "正在解析视频编码、画幅与流光色彩…"
             do {
-                let spec = try await LivePhotoConverter.inspectVideo(at: imported.url)
+                let spec = try await LivePhotoConverter.inspectVideo(at: imported.url, thumbnailCount: 0)
                 stopPlayback()
                 player?.replaceCurrentItem(with: nil)
                 cleanupGeneratedFiles()
@@ -896,12 +923,11 @@ struct ContentView: View {
                 trimEndSeconds = spec.durationSeconds
                 useCustomCoverTime = false
                 customCoverTimeSeconds = 0.0
-                coverPreviewImage = spec.thumbnails.first
-                withAnimation(.easeInOut(duration: 0.6)) {
-                    activeAmbientPalette = spec.ambientPalette
-                }
+                timelineFrames = []
+                coverPreviewImage = nil
+                activeAmbientPalette = nil
                 isWorking = false
-                editorPath.append(EditorRoute(sourceID: transitionID))
+                editorPath.append(EditorRoute(sourceID: assetID))
             } catch {
                 imported.remove()
                 isWorking = false
@@ -1213,9 +1239,15 @@ private extension View {
     }
 }
 
+private struct LibraryVideo: Identifiable {
+    let id: String
+    let asset: PHAsset
+    let position: Int
+}
+
 @Observable @MainActor
 private final class VideoLibrary {
-    private(set) var videos: [PHAsset] = []
+    private(set) var videos: [LibraryVideo] = []
     private(set) var albums: [PHAssetCollection] = []
     private var status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
     var canBrowse: Bool { status == .authorized || status == .limited }
@@ -1234,9 +1266,11 @@ private final class VideoLibrary {
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         let result = album.map { PHAsset.fetchAssets(in: $0, options: options) }
             ?? PHAsset.fetchAssets(with: options)
-        var items: [PHAsset] = []
-        result.enumerateObjects { asset, _, _ in items.append(asset) }
-        videos = items
+        var items: [LibraryVideo] = []
+        result.enumerateObjects { asset, index, _ in
+            items.append(LibraryVideo(id: asset.localIdentifier, asset: asset, position: index))
+        }
+        if videos.map(\.id) != items.map(\.id) { videos = items }
         if album == nil {
             var collections: [PHAssetCollection] = []
             PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: nil)
@@ -1248,8 +1282,17 @@ private final class VideoLibrary {
 
 private struct LibraryThumbnail: View {
     let asset: PHAsset
+    let assetID: String
+    @MainActor private static let manager = PHCachingImageManager()
+    @MainActor private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 90
+        cache.totalCostLimit = 35 * 1024 * 1024
+        return cache
+    }()
     @State private var thumbnail: UIImage?
     @State private var request: PHImageRequestID?
+    @State private var requestToken: UUID?
 
     var body: some View {
         GeometryReader { proxy in
@@ -1272,20 +1315,36 @@ private struct LibraryThumbnail: View {
             }
         }
         .onAppear {
-            guard thumbnail == nil, request == nil else { return }
+            guard request == nil else { return }
+            if let cached = Self.cache.object(forKey: assetID as NSString) {
+                thumbnail = cached
+                return
+            }
+            let token = UUID()
+            requestToken = token
             let options = PHImageRequestOptions()
             options.deliveryMode = .opportunistic
             options.resizeMode = .fast
-            options.isNetworkAccessAllowed = true
-            request = PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 380, height: 440),
-                                                            contentMode: .aspectFill, options: options) { image, info in
+            options.isNetworkAccessAllowed = false
+            request = Self.manager.requestImage(for: asset, targetSize: CGSize(width: 300, height: 350),
+                                                contentMode: .aspectFill, options: options) { image, info in
                 guard let image, (info?[PHImageCancelledKey] as? Bool) != true else { return }
-                Task { @MainActor in thumbnail = image }
+                let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) == true
+                Task { @MainActor in
+                    guard requestToken == token else { return }
+                    thumbnail = image
+                    if !degraded {
+                        let pixels = Int(image.size.width * image.size.height * image.scale * image.scale)
+                        Self.cache.setObject(image, forKey: assetID as NSString, cost: pixels * 4)
+                    }
+                }
             }
         }
         .onDisappear {
-            if let request { PHImageManager.default().cancelImageRequest(request) }
+            requestToken = nil
+            if let request { Self.manager.cancelImageRequest(request) }
             request = nil
+            thumbnail = nil
         }
         .accessibilityHidden(true)
     }
