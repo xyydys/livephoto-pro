@@ -2,7 +2,7 @@ name: Build iOS IPA
 
 on:
   push:
-    branches: [main]
+    branches: [main, redesign/elegant-glass]
     paths:
       - LivePhotoPreserve/**
       - LivePhotoPreserve.xcodeproj/**
@@ -22,6 +22,10 @@ jobs:
 
       - name: Build for iPhone and iPad
         run: |
+          xcode_app="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)"
+          if [ -n "$xcode_app" ]; then
+            export DEVELOPER_DIR="$xcode_app/Contents/Developer"
+          fi
           xcodebuild -version
           xcodebuild \
             -project LivePhotoPreserve.xcodeproj \

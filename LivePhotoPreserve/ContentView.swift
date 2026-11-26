@@ -6,63 +6,44 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-// MARK: - Ambient Background Theme
+// MARK: - Design Tokens
 
-enum AmbientTheme: String, CaseIterable, Identifiable {
-    case adaptive = "随影流光"
-    case aurora = "深海极光"
-    case solar = "琥珀流金"
-    case frost = "冰川琉璃"
+private enum Theme {
+    /// Calm periwinkle blue used for primary actions and selection.
+    static let accent = Color(red: 0.42, green: 0.60, blue: 1.0)
+    /// Lighter tint of the accent for small highlights on dark glass.
+    static let accentSoft = Color(red: 0.70, green: 0.80, blue: 1.0)
+    static let success = Color(red: 0.45, green: 0.86, blue: 0.64)
+    static let caution = Color(red: 1.0, green: 0.72, blue: 0.40)
+    static let danger = Color(red: 1.0, green: 0.45, blue: 0.45)
+    static let primaryText = Color.white.opacity(0.95)
+    static let secondaryText = Color.white.opacity(0.62)
+    static let tertiaryText = Color.white.opacity(0.40)
+    static let separator = Color.white.opacity(0.08)
+    static let fill = Color.white.opacity(0.06)
+    static let maxContentWidth: CGFloat = 600
+}
+
+enum BackdropStyle: String, CaseIterable, Identifiable {
+    case ambience = "画面氛围"
+    case pure = "纯净深色"
 
     var id: String { rawValue }
 
-    var icon: String {
+    var detail: String {
         switch self {
-        case .adaptive: return "sparkles.tv"
-        case .aurora: return "water.waves"
-        case .solar: return "sun.max.fill"
-        case .frost: return "snowflake"
-        }
-    }
-
-    func palette(videoPalette: [RGBAColor]?) -> [RGBAColor] {
-        switch self {
-        case .adaptive:
-            if let videoPalette, videoPalette.count == 4 {
-                return videoPalette
-            }
-            return Self.aurora.palette(videoPalette: nil)
-        case .aurora:
-            return [
-                RGBAColor(r: 0.06, g: 0.36, b: 0.72),
-                RGBAColor(r: 0.36, g: 0.14, b: 0.68),
-                RGBAColor(r: 0.04, g: 0.58, b: 0.64),
-                RGBAColor(r: 0.14, g: 0.10, b: 0.36)
-            ]
-        case .solar:
-            return [
-                RGBAColor(r: 0.72, g: 0.28, b: 0.14),
-                RGBAColor(r: 0.58, g: 0.12, b: 0.42),
-                RGBAColor(r: 0.80, g: 0.48, b: 0.12),
-                RGBAColor(r: 0.24, g: 0.08, b: 0.26)
-            ]
-        case .frost:
-            return [
-                RGBAColor(r: 0.22, g: 0.46, b: 0.74),
-                RGBAColor(r: 0.38, g: 0.36, b: 0.68),
-                RGBAColor(r: 0.16, g: 0.58, b: 0.72),
-                RGBAColor(r: 0.12, g: 0.20, b: 0.38)
-            ]
+        case .ambience: return "以当前封面帧柔焦铺底"
+        case .pure: return "安静的深色渐变"
         }
     }
 }
 
 enum DurationPreset: String, CaseIterable, Identifiable {
-    case full = "完整全长"
+    case full = "完整"
     case threeSeconds = "3 秒"
     case fiveSeconds = "5 秒"
     case tenSeconds = "10 秒"
-    case custom = "自由区间"
+    case custom = "自定义"
 
     var id: String { rawValue }
 
@@ -78,10 +59,24 @@ enum DurationPreset: String, CaseIterable, Identifiable {
 }
 
 enum PreviewStageMode: String, CaseIterable, Identifiable {
-    case video = "原片画面"
-    case livePhoto = "实况预览"
+    case video = "原片"
+    case livePhoto = "实况"
 
     var id: String { rawValue }
+}
+
+private enum StudioTab: String, CaseIterable, Identifiable {
+    case duration = "时长"
+    case cover = "封面"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .duration: return "timeline.selection"
+        case .cover: return "photo"
+        }
+    }
 }
 
 // MARK: - Main ContentView
@@ -101,12 +96,17 @@ struct ContentView: View {
 
     // Preview & conversion state
     @State private var stageMode: PreviewStageMode = .video
+    @State private var studioTab: StudioTab = .duration
+    @State private var showsSpecDetails = false
     @State private var generatedFiles: LivePhotoFiles?
     @State private var generatedLivePhoto: PHLivePhoto?
     @State private var livePhotoPlaybackTrigger = 0
     @State private var isWorking = false
     @State private var workingStatus = "正在处理…"
     @State private var feedback: Feedback?
+    @State private var justSaved = false
+    @State private var successPulse = 0
+    @State private var errorPulse = 0
 
     // User-configurable conversion options
     @AppStorage("LP_disablePlaybackZoom") private var disablePlaybackZoom = true
@@ -114,8 +114,8 @@ struct ContentView: View {
     @AppStorage("LP_includeAudio") private var includeAudio = true
     @AppStorage("LP_coverFormat") private var coverFormatRaw = CoverImageFormat.jpeg.rawValue
     @AppStorage("LP_apertureMode") private var apertureModeRaw = CoverApertureMode.encodedPixels.rawValue
-    @AppStorage("LP_ambientTheme") private var ambientThemeRaw = AmbientTheme.adaptive.rawValue
-    @AppStorage("LP_dynamicBackgroundMotion") private var dynamicBackgroundMotion = true
+    @AppStorage("LP_backdropStyle") private var backdropStyleRaw = BackdropStyle.ambience.rawValue
+    @AppStorage("LP_hapticsEnabled") private var hapticsEnabled = true
 
     // Timeline trimming & cover frame controls
     @State private var durationPreset: DurationPreset = .full
@@ -124,7 +124,8 @@ struct ContentView: View {
     @State private var useCustomCoverTime = false
     @State private var customCoverTimeSeconds: Double = 0.0
     @State private var coverPreviewImage: CGImage?
-    @State private var activeAmbientPalette: [RGBAColor]?
+    @State private var backdropImage: CGImage?
+    @State private var backdropToken = 0
 
     private var coverFormat: CoverImageFormat {
         CoverImageFormat(rawValue: coverFormatRaw) ?? .jpeg
@@ -134,12 +135,8 @@ struct ContentView: View {
         CoverApertureMode(rawValue: apertureModeRaw) ?? .encodedPixels
     }
 
-    private var ambientTheme: AmbientTheme {
-        AmbientTheme(rawValue: ambientThemeRaw) ?? .adaptive
-    }
-
-    private var currentPalette: [RGBAColor] {
-        ambientTheme.palette(videoPalette: activeAmbientPalette ?? specification?.ambientPalette)
+    private var backdropStyle: BackdropStyle {
+        BackdropStyle(rawValue: backdropStyleRaw) ?? .ambience
     }
 
     private var effectiveTrimRange: ClosedRange<Double>? {
@@ -163,12 +160,24 @@ struct ContentView: View {
         }
     }
 
+    /// The trim window as drawn on the timeline (never nil).
+    private var displayedRange: ClosedRange<Double> {
+        let total = max(0.1, specification?.durationSeconds ?? 0.1)
+        return effectiveTrimRange ?? 0.0...total
+    }
+
     private var effectiveOutputDuration: Double {
         guard let spec = specification else { return 0 }
         if let range = effectiveTrimRange {
             return max(0.1, range.upperBound - range.lowerBound)
         }
         return spec.durationSeconds
+    }
+
+    private var displayedCoverTime: Double {
+        let range = displayedRange
+        guard useCustomCoverTime else { return range.lowerBound }
+        return min(max(customCoverTimeSeconds, range.lowerBound), range.upperBound)
     }
 
     private var currentConversionOptions: ConversionOptions {
@@ -194,36 +203,67 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            LiquidAmbientBackgroundView(
-                palette: currentPalette,
-                isAnimating: dynamicBackgroundMotion,
-                isEnergetic: isWorking
+            AmbienceBackdrop(
+                image: backdropStyle == .ambience ? backdropImage : nil,
+                token: backdropToken
             )
-            .ignoresSafeArea()
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 18) {
-                    topHeaderBar
+                    header
+                        .reveal(0)
 
-                    heroPreviewStage
-
-                    if let spec = specification {
-                        mediaSpecBentoCard(spec)
-                        timelineAndCoverStudioCard(spec)
+                    if let spec = specification, let source, let player {
+                        Group {
+                            stageCard(spec: spec, source: source, player: player)
+                                .reveal(1)
+                            studioCard(spec)
+                                .reveal(2)
+                            engineCard
+                                .reveal(3)
+                            footnote
+                                .reveal(4)
+                        }
+                        .id(source.url)
+                    } else {
+                        welcomeCard
+                            .reveal(1)
                     }
-
-                    antiZoomAndEngineCard
-
-                    bottomActionDeck
                 }
-                .frame(maxWidth: 580)
                 .padding(.horizontal, 18)
-                .padding(.top, 10)
-                .padding(.bottom, 36)
+                .padding(.top, 8)
+                .padding(.bottom, 28)
+                .frame(maxWidth: Theme.maxContentWidth)
                 .frame(maxWidth: .infinity)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if source != nil {
+                actionDock
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .top) {
+            if let feedback {
+                ToastView(feedback: feedback) {
+                    withAnimation(.smooth(duration: 0.35)) { self.feedback = nil }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 6)
+                .frame(maxWidth: Theme.maxContentWidth)
+                .transition(.move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.96, anchor: .top)))
+                .zIndex(2)
+            }
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.86), value: source?.url)
+        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: feedback?.id)
         .preferredColorScheme(.dark)
+        .tint(Theme.accent)
+        .sensoryFeedback(trigger: successPulse) { _, _ in hapticsEnabled ? .success : nil }
+        .sensoryFeedback(trigger: errorPulse) { _, _ in hapticsEnabled ? .error : nil }
+        .sensoryFeedback(trigger: studioTab) { _, _ in hapticsEnabled ? .selection : nil }
+        .sensoryFeedback(trigger: stageMode) { _, _ in hapticsEnabled ? .selection : nil }
+        .sensoryFeedback(trigger: durationPreset) { _, _ in hapticsEnabled ? .selection : nil }
         .sheet(isPresented: $showsPhotoPicker) {
             VideoPhotoPicker(
                 didStart: {
@@ -236,6 +276,7 @@ struct ContentView: View {
                     Task { await finishImport(result) }
                 }
             )
+            .ignoresSafeArea()
         }
         .fileImporter(isPresented: $showsFilePicker, allowedContentTypes: [.movie, .video, .mpeg4Movie, .quickTimeMovie]) { result in
             Task { @MainActor in
@@ -256,1202 +297,800 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showsSettingsSheet) {
-            settingsSheetView
+            SettingsView(
+                coverFormatRaw: $coverFormatRaw,
+                apertureModeRaw: $apertureModeRaw,
+                backdropStyleRaw: $backdropStyleRaw,
+                hapticsEnabled: $hapticsEnabled,
+                previewImage: backdropImage
+            )
         }
         .sheet(isPresented: $showsAntiZoomPrincipleSheet) {
-            antiZoomPrincipleSheetView
+            NavigationStack {
+                AntiZoomExplainer()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("完成") { showsAntiZoomPrincipleSheet = false }
+                                .fontWeight(.semibold)
+                        }
+                    }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .preferredColorScheme(.dark)
         }
         .sheet(isPresented: $showsShareSheet) {
             ActivityShareSheet(activityItems: shareItems)
+                .presentationDetents([.medium, .large])
+        }
+        .onChange(of: stageMode) { _, mode in
+            if mode == .livePhoto {
+                player?.pause()
+            }
         }
         .onDisappear {
             player?.pause()
         }
     }
 
-    // MARK: - Top Floating Liquid Glass Header
+    // MARK: - Header
 
-    private var topHeaderBar: some View {
-        HStack(spacing: 12) {
-            HStack(spacing: 10) {
-                ZStack {
+    private var header: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("实况原画")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.primaryText)
+                HStack(spacing: 6) {
                     Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.cyan.opacity(0.45), Color.indigo.opacity(0.35)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 40, height: 40)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(
-                                    LinearGradient(
-                                        colors: [.white.opacity(0.65), .white.opacity(0.1)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 1
-                                )
-                        )
-
-                    Image(systemName: "livephoto")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .fill(disablePlaybackZoom ? Theme.success : Theme.tertiaryText)
+                        .frame(width: 6, height: 6)
+                    Text(disablePlaybackZoom ? "无损直通 · 1:1 零缩放" : "无损直通 · 系统默认缩放")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.secondaryText)
+                        .contentTransition(.interpolate)
                 }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text("实况原画")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-
-                        Text("PRO")
-                            .font(.system(size: 10, weight: .heavy, design: .rounded))
-                            .tracking(0.8)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [Color.cyan.opacity(0.85), Color.blue.opacity(0.75)],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                            )
-                            .foregroundStyle(.white)
-                    }
-
-                    Text(disablePlaybackZoom ? "无损直通封装 · 1:1 强制撤销播放缩放" : "无损直通封装 · 原生实况动态缩放")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.72))
-                }
+                .animation(.smooth, value: disablePlaybackZoom)
             }
 
-            Spacer()
+            Spacer(minLength: 8)
 
-            Menu {
-                Section("流光背景主题") {
-                    ForEach(AmbientTheme.allCases) { theme in
-                        Button {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                                ambientThemeRaw = theme.rawValue
-                            }
-                        } label: {
-                            Label(
-                                theme.rawValue,
-                                systemImage: ambientTheme == theme ? "checkmark.circle.fill" : theme.icon
-                            )
-                        }
-                    }
-                }
-                Section("背景动态流转") {
-                    Button {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            dynamicBackgroundMotion.toggle()
-                        }
-                    } label: {
-                        Label(
-                            dynamicBackgroundMotion ? "已开启液态流光变换" : "已暂停背景流光",
-                            systemImage: dynamicBackgroundMotion ? "pause.circle" : "play.circle"
-                        )
-                    }
-                }
-            } label: {
-                Image(systemName: ambientTheme.icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .modifier(LiquidGlassCircleModifier())
-            }
-            .accessibilityLabel("切换流光背景主题")
-
-            Button {
-                showsSettingsSheet = true
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 38, height: 38)
-                    .modifier(LiquidGlassCircleModifier())
-            }
-            .accessibilityLabel("高级封装设置")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .modifier(LiquidGlassCardModifier(cornerRadius: 24, tintOpacity: 0.10))
-    }
-
-    // MARK: - Hero Preview Stage
-
-    private var heroPreviewStage: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let source, let player {
-                // Header inside stage
+            GlassGroup(spacing: 10) {
                 HStack(spacing: 10) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "film.stack")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.cyan)
-                        Text(source.name)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
+                    if source != nil {
+                        Menu {
+                            importMenuItems
+                        } label: {
+                            GlassIcon(systemName: "plus")
+                        }
+                        .disabled(isWorking)
+                        .accessibilityLabel("更换视频")
+                        .transition(.scale.combined(with: .opacity))
                     }
 
-                    Spacer()
-
-                    if generatedLivePhoto != nil {
-                        HStack(spacing: 4) {
-                            ForEach(PreviewStageMode.allCases) { mode in
-                                Button {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                        stageMode = mode
-                                        if mode == .livePhoto {
-                                            player.pause()
-                                        }
-                                    }
-                                } label: {
-                                    Text(mode.rawValue)
-                                        .font(.system(size: 11.5, weight: .semibold))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(
-                                            Capsule()
-                                                .fill(stageMode == mode ? Color.white.opacity(0.24) : Color.clear)
-                                        )
-                                        .foregroundStyle(stageMode == mode ? .white : .white.opacity(0.65))
-                                }
-                            }
-                        }
-                        .padding(3)
-                        .background(Capsule().fill(Color.black.opacity(0.32)))
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.8))
-                    }
-
-                    Menu {
-                        Button {
-                            showsPhotoPicker = true
-                        } label: {
-                            Label("从相册更换视频", systemImage: "photo.on.rectangle.angled")
-                        }
-                        Button {
-                            showsFilePicker = true
-                        } label: {
-                            Label("从文件导入原片", systemImage: "folder.badge.plus")
-                        }
+                    Button {
+                        showsSettingsSheet = true
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                            Text("更换")
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.8))
-                        .foregroundStyle(.white)
+                        GlassIcon(systemName: "gearshape")
                     }
-                    .disabled(isWorking)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("设置")
                 }
-
-                // Video or Live Photo Stage
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color.black.opacity(0.65))
-
-                    if stageMode == .livePhoto, let livePhoto = generatedLivePhoto {
-                        LivePhotoPreviewView(
-                            livePhoto: livePhoto,
-                            isMuted: !includeAudio,
-                            playbackTrigger: livePhotoPlaybackTrigger
-                        )
-                        .frame(height: 360)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    } else {
-                        VideoPlayer(player: player)
-                            .frame(height: 360)
-                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                            .accessibilityLabel("原视频预览")
-                    }
-
-                    // Floating status badges on top of stage
-                    HStack(spacing: 8) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "livephoto")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(.yellow)
-                            Text(stageMode == .livePhoto ? "长按画面测试 1:1 实况播放" : (disablePlaybackZoom ? "1:1 零缩放实况模式" : "标准实况模式"))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.8))
-
-                        if effectiveOutputDuration > 3.1 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "infinity")
-                                    .font(.system(size: 10, weight: .bold))
-                                Text(String(format: "%.1fs 超长实况", effectiveOutputDuration))
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .foregroundStyle(.cyan)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .overlay(Capsule().strokeBorder(Color.cyan.opacity(0.45), lineWidth: 0.8))
-                        }
-
-                        Spacer()
-
-                        if stageMode == .livePhoto && generatedLivePhoto != nil {
-                            Button {
-                                livePhotoPlaybackTrigger += 1
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "play.fill")
-                                        .font(.system(size: 10, weight: .bold))
-                                    Text("播放实况")
-                                        .font(.system(size: 11, weight: .semibold))
-                                }
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.cyan.opacity(0.45), in: Capsule())
-                                .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8))
-                            }
-                        }
-                    }
-                    .padding(12)
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [.white.opacity(0.38), .white.opacity(0.06), .cyan.opacity(0.25)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.1
-                        )
-                )
-            } else {
-                emptyHeroImportView
             }
         }
-        .padding(16)
-        .modifier(LiquidGlassCardModifier(cornerRadius: 28, tintOpacity: 0.12))
+        .padding(.horizontal, 4)
+        .padding(.top, 6)
     }
 
-    private var emptyHeroImportView: some View {
-        VStack(spacing: 20) {
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Color.cyan.opacity(0.35), Color.indigo.opacity(0.15), .clear],
-                            center: .center,
-                            startRadius: 6,
-                            endRadius: 64
-                        )
-                    )
-                    .frame(width: 116, height: 116)
+    @ViewBuilder
+    private var importMenuItems: some View {
+        Button {
+            showsPhotoPicker = true
+        } label: {
+            Label("从相册选择", systemImage: "photo.on.rectangle.angled")
+        }
+        Button {
+            showsFilePicker = true
+        } label: {
+            Label("从文件导入", systemImage: "folder")
+        }
+    }
 
-                Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            colors: [.cyan.opacity(0.8), .white.opacity(0.9), .purple.opacity(0.7), .cyan.opacity(0.8)],
-                            center: .center
-                        ),
-                        style: StrokeStyle(lineWidth: 2.2, dash: [5, 5])
-                    )
-                    .frame(width: 82, height: 82)
+    // MARK: - Welcome
 
-                Image(systemName: "livephoto.play")
-                    .font(.system(size: 36, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [.white, .cyan.opacity(0.9)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .padding(.top, 8)
+    private var welcomeCard: some View {
+        VStack(spacing: 26) {
+            BreathingLiveIcon()
+                .frame(width: 112, height: 112)
+                .padding(.top, 18)
 
-            VStack(spacing: 8) {
-                Text("高清视频无损直通实况照片")
-                    .font(.system(size: 21, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Text("直接封装原视频 H.264 / HEVC 压缩样本，不重编码、不降画质。突破 3 秒时长限制，并从系统底层强制撤销实况播放时的默认放大。")
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(.white.opacity(0.75))
+            VStack(spacing: 10) {
+                Text("让视频成为实况照片")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.primaryText)
+                Text("原画样本直通封装，不重编码；\n任意时长，长按播放时画面不再放大。")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.secondaryText)
                     .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .padding(.horizontal, 8)
+                    .lineSpacing(4)
             }
 
-            // Feature highlight pills
-            HStack(spacing: 8) {
-                featureBadge(icon: "arrow.up.left.and.arrow.down.right", text: "1:1 零放大播放")
-                featureBadge(icon: "infinity", text: "突破 3 秒限制")
-                featureBadge(icon: "sparkles", text: "原画比特直通")
-            }
-
-            HStack(spacing: 12) {
+            VStack(spacing: 12) {
                 Button {
                     showsPhotoPicker = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("从相册选择视频")
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        LinearGradient(
-                            colors: [Color.cyan.opacity(0.55), Color.blue.opacity(0.55)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.65), .white.opacity(0.15)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .foregroundStyle(.white)
+                    Label("从相册选择视频", systemImage: "photo.on.rectangle.angled")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
                 }
-                .disabled(isWorking)
+                .prominentGlassButton()
 
                 Button {
                     showsFilePicker = true
                 } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "folder.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("从文件导入原片")
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        Color.white.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [.white.opacity(0.45), .white.opacity(0.10)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 1
-                            )
-                    )
-                    .foregroundStyle(.white)
+                    Label("从文件导入", systemImage: "folder")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
                 }
-                .disabled(isWorking)
+                .regularGlassButton()
+            }
+            .controlSize(.large)
+            .disabled(isWorking)
+
+            if isWorking {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text(workingStatus)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                .transition(.blurReplace)
+            }
+
+            HStack(spacing: 0) {
+                welcomeFeature(icon: "arrow.up.left.and.arrow.down.right", title: "1:1 播放")
+                Rectangle().fill(Theme.separator).frame(width: 0.5, height: 34)
+                welcomeFeature(icon: "infinity", title: "不限时长")
+                Rectangle().fill(Theme.separator).frame(width: 0.5, height: 34)
+                welcomeFeature(icon: "square.stack.3d.down.right", title: "原画直通")
             }
             .padding(.top, 4)
+            .padding(.bottom, 6)
         }
-        .padding(.vertical, 10)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 22)
+        .frame(maxWidth: .infinity)
+        .studioGlass(RoundedRectangle(cornerRadius: 34, style: .continuous))
+        .animation(.smooth, value: isWorking)
     }
 
-    private func featureBadge(icon: String, text: String) -> some View {
-        HStack(spacing: 5) {
+    private func welcomeFeature(icon: String, title: String) -> some View {
+        VStack(spacing: 7) {
             Image(systemName: icon)
-                .font(.system(size: 10.5, weight: .bold))
-                .foregroundStyle(.cyan)
-            Text(text)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.88))
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.accentSoft)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.secondaryText)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.08), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8))
+        .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Media Specification Bento Card
+    // MARK: - Stage Card
 
-    private func mediaSpecBentoCard(_ spec: VideoSpecification) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("原片编码与画幅诊断", systemImage: "cpu.fill")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
+    private func stageAspect(_ spec: VideoSpecification) -> CGFloat {
+        let size = spec.naturalSize
+        guard size.width > 0, size.height > 0 else { return 16.0 / 9.0 }
+        return max(0.8, min(size.width / size.height, 1.85))
+    }
 
-                Spacer()
-
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(spec.isPassthroughCompatible ? Color.green : Color.orange)
-                        .frame(width: 7, height: 7)
-                    Text(spec.isPassthroughCompatible ? "支持零重编码直通" : "非标准直通编码")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(spec.isPassthroughCompatible ? Color.green : Color.orange)
+    private func stageCard(spec: VideoSpecification, source: ImportedVideo, player: AVPlayer) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(source.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(String(format: "%.2f 秒 · ", spec.durationSeconds) + spec.fileSizeText)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.tertiaryText)
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.28), in: Capsule())
-            }
-
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 10),
-                    GridItem(.flexible(), spacing: 10)
-                ],
-                spacing: 10
-            ) {
-                specTile(
-                    title: "画幅分辨率",
-                    primary: spec.resolutionText,
-                    badge: spec.resolutionTier,
-                    icon: "viewfinder"
-                )
-                specTile(
-                    title: "视频编码 & 色域",
-                    primary: spec.codecName,
-                    badge: spec.colorSpaceLabel,
-                    icon: spec.isHDR ? "sparkles.tv.fill" : "film"
-                )
-                specTile(
-                    title: "帧率 & 总帧数",
-                    primary: spec.frameRateText,
-                    badge: "约 \(spec.totalFramesEstimate) 帧",
-                    icon: "speedometer"
-                )
-                specTile(
-                    title: "时长 & 码率体积",
-                    primary: String(format: "%.2f 秒", spec.durationSeconds),
-                    badge: String(format: "%.1f Mbps · %@", spec.estimatedBitrateMbps, spec.fileSizeText),
-                    icon: "waveform.path.ecg"
-                )
-            }
-        }
-        .padding(16)
-        .modifier(LiquidGlassCardModifier(cornerRadius: 24, tintOpacity: 0.09))
-    }
-
-    private func specTile(title: String, primary: String, badge: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.cyan)
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.62))
-            }
-
-            Text(primary)
-                .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-
-            Text(badge)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.75))
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(11)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.8)
-        )
-    }
-
-    // MARK: - Timeline Trimming & Cover Frame Studio Card
-
-    private func timelineAndCoverStudioCard(_ spec: VideoSpecification) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label("时长截取与封面帧工作台", systemImage: "timeline.selection")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
-
-                Spacer()
-
-                Text(String(format: "输出时长 %.2fs", effectiveOutputDuration))
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.cyan)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.cyan.opacity(0.16), in: Capsule())
-                    .overlay(Capsule().strokeBorder(Color.cyan.opacity(0.38), lineWidth: 0.8))
-            }
-
-            // Filmstrip thumbnail bar
-            if !spec.thumbnails.isEmpty {
-                GeometryReader { geo in
-                    let total = max(0.1, spec.durationSeconds)
-                    let startRatio = CGFloat((effectiveTrimRange?.lowerBound ?? 0.0) / total)
-                    let endRatio = CGFloat((effectiveTrimRange?.upperBound ?? total) / total)
-                    let coverSeconds = useCustomCoverTime
-                        ? max(effectiveTrimRange?.lowerBound ?? 0, min(customCoverTimeSeconds, effectiveTrimRange?.upperBound ?? total))
-                        : (effectiveTrimRange?.lowerBound ?? 0)
-                    let coverRatio = CGFloat(coverSeconds / total)
-
-                    ZStack(alignment: .leading) {
-                        HStack(spacing: 2) {
-                            ForEach(Array(spec.thumbnails.enumerated()), id: \.offset) { _, cgImage in
-                                Image(uiImage: UIImage(cgImage: cgImage))
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(
-                                        width: max(10, (geo.size.width - CGFloat(spec.thumbnails.count - 1) * 2) / CGFloat(spec.thumbnails.count)),
-                                        height: 54
-                                    )
-                                    .clipped()
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                        // Dimmed masks outside active trim range
-                        if startRatio > 0.005 {
-                            Rectangle()
-                                .fill(Color.black.opacity(0.62))
-                                .frame(width: geo.size.width * startRatio, height: 54)
-                        }
-                        if endRatio < 0.995 {
-                            Rectangle()
-                                .fill(Color.black.opacity(0.62))
-                                .frame(width: geo.size.width * (1.0 - endRatio), height: 54)
-                                .offset(x: geo.size.width * endRatio)
-                        }
-
-                        // Active trim window frame
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.cyan, lineWidth: 2)
-                            .frame(
-                                width: max(16, geo.size.width * (endRatio - startRatio)),
-                                height: 54
-                            )
-                            .offset(x: geo.size.width * startRatio)
-
-                        // Cover frame indicator pin
-                        VStack(spacing: 0) {
-                            Text("封面")
-                                .font(.system(size: 9, weight: .heavy))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1.5)
-                                .background(Color.yellow, in: Capsule())
-                                .foregroundStyle(.black)
-                            Rectangle()
-                                .fill(Color.yellow)
-                                .frame(width: 2.2, height: 42)
-                        }
-                        .offset(x: min(max(0, geo.size.width * coverRatio - 14), geo.size.width - 28), y: -4)
-                    }
+                Spacer(minLength: 8)
+                if generatedLivePhoto != nil {
+                    GlassSegmented(
+                        items: PreviewStageMode.allCases,
+                        selection: $stageMode,
+                        title: { $0.rawValue },
+                        compact: true
+                    )
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
                 }
-                .frame(height: 56)
             }
+            .padding(.horizontal, 4)
 
-            // Duration Preset Chips
-            VStack(alignment: .leading, spacing: 8) {
-                Text("实况时长模式（已解除 3 秒限制，支持原片任意完整时长）")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(DurationPreset.allCases) { preset in
-                            let isSelected = durationPreset == preset
-                            Button {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    durationPreset = preset
-                                    if preset == .custom && trimEndSeconds <= trimStartSeconds {
-                                        trimStartSeconds = 0.0
-                                        trimEndSeconds = spec.durationSeconds
-                                    }
-                                }
-                            } label: {
-                                HStack(spacing: 5) {
-                                    if preset == .full {
-                                        Image(systemName: "infinity")
-                                            .font(.system(size: 11, weight: .bold))
-                                    }
-                                    Text(preset.rawValue)
-                                        .font(.system(size: 12.5, weight: .semibold))
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? Color.cyan.opacity(0.38) : Color.white.opacity(0.08))
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(
-                                            isSelected ? Color.cyan.opacity(0.85) : Color.white.opacity(0.16),
-                                            lineWidth: 1
-                                        )
-                                )
+            ZStack {
+                Color.black
+                if stageMode == .livePhoto, let livePhoto = generatedLivePhoto {
+                    LivePhotoPreviewView(
+                        livePhoto: livePhoto,
+                        isMuted: !includeAudio,
+                        playbackTrigger: livePhotoPlaybackTrigger
+                    )
+                    .transition(.blurReplace)
+                } else {
+                    VideoPlayer(player: player)
+                        .accessibilityLabel("原视频预览")
+                        .transition(.blurReplace)
+                }
+            }
+            .aspectRatio(stageAspect(spec), contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.6)
+            )
+            .overlay(alignment: .topLeading) {
+                liveBadge
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .bottom) {
+                if stageMode == .livePhoto, generatedLivePhoto != nil {
+                    HStack {
+                        Label("长按画面播放", systemImage: "hand.point.up.left")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .studioGlass(Capsule())
+                        Spacer()
+                        Button {
+                            livePhotoPlaybackTrigger += 1
+                        } label: {
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.white)
-                            }
+                                .frame(width: 18, height: 18)
                         }
-                    }
-                }
-            }
-
-            if durationPreset == .custom && spec.durationSeconds > 0.3 {
-                VStack(spacing: 10) {
-                    HStack {
-                        Text(String(format: "起点: %.2fs", trimStartSeconds))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.85))
-                        Slider(
-                            value: Binding(
-                                get: { trimStartSeconds },
-                                set: { newVal in
-                                    trimStartSeconds = min(newVal, max(0, trimEndSeconds - 0.2))
-                                    seekPlayer(to: trimStartSeconds)
-                                }
-                            ),
-                            in: 0...max(0.1, spec.durationSeconds - 0.2)
-                        )
-                        .tint(.cyan)
-                    }
-
-                    HStack {
-                        Text(String(format: "终点: %.2fs", trimEndSeconds))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.85))
-                        Slider(
-                            value: Binding(
-                                get: { trimEndSeconds },
-                                set: { newVal in
-                                    trimEndSeconds = max(newVal, min(spec.durationSeconds, trimStartSeconds + 0.2))
-                                    seekPlayer(to: trimEndSeconds)
-                                }
-                            ),
-                            in: 0.2...max(0.3, spec.durationSeconds)
-                        )
-                        .tint(.cyan)
-                    }
-                }
-                .padding(12)
-                .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-
-            Divider()
-                .overlay(Color.white.opacity(0.14))
-
-            // Cover frame selection
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("实况封面帧 (Key Photo)")
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Text(useCustomCoverTime ? String(format: "已指定 %.2fs 处画面作为实况静态封面", customCoverTimeSeconds) : "默认采用片段首帧作为封面，长按播放时零跳帧")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(.white.opacity(0.68))
-                    }
-
-                    Spacer()
-
-                    Picker("封面策略", selection: $useCustomCoverTime) {
-                        Text("首帧 (零跳帧)").tag(false)
-                        Text("自选帧").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 170)
-                    .onChange(of: useCustomCoverTime) { _, isCustom in
-                        if isCustom {
-                            let start = effectiveTrimRange?.lowerBound ?? 0.0
-                            customCoverTimeSeconds = start
-                            Task { await updateCoverFramePreview(at: start) }
-                        }
-                    }
-                }
-
-                if useCustomCoverTime {
-                    let minTime = effectiveTrimRange?.lowerBound ?? 0.0
-                    let maxTime = max(minTime + 0.05, (effectiveTrimRange?.upperBound ?? spec.durationSeconds) - 0.02)
-
-                    HStack(spacing: 12) {
-                        if let coverPreviewImage {
-                            Image(uiImage: UIImage(cgImage: coverPreviewImage))
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 60, height: 60)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .strokeBorder(Color.yellow.opacity(0.8), lineWidth: 1.2)
-                                )
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(String(format: "封面时间戳: %.2f 秒", customCoverTimeSeconds))
-                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(.yellow)
-                                Spacer()
-                                Text("流光背景随帧变色")
-                                    .font(.system(size: 10.5, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.55))
-                            }
-
-                            Slider(
-                                value: Binding(
-                                    get: { min(max(customCoverTimeSeconds, minTime), maxTime) },
-                                    set: { newTime in
-                                        customCoverTimeSeconds = newTime
-                                        seekPlayer(to: newTime)
-                                        Task { await updateCoverFramePreview(at: newTime) }
-                                    }
-                                ),
-                                in: minTime...maxTime
-                            )
-                            .tint(.yellow)
-                        }
+                        .regularGlassButton()
+                        .accessibilityLabel("播放实况")
                     }
                     .padding(10)
-                    .background(Color.black.opacity(0.24), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
+            .animation(.smooth(duration: 0.4), value: stageMode)
+            .animation(.smooth(duration: 0.4), value: generatedLivePhoto != nil)
+
+            specDisclosure(spec)
         }
-        .padding(16)
-        .modifier(LiquidGlassCardModifier(cornerRadius: 24, tintOpacity: 0.10))
+        .padding(14)
+        .studioGlass(RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 
-    // MARK: - Anti-Zoom & Core Engine Card
+    private var liveBadge: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "livephoto")
+                .font(.system(size: 12, weight: .semibold))
+            Text("实况")
+                .font(.system(size: 12, weight: .semibold))
+            if effectiveOutputDuration > 3.05 {
+                Text(String(format: "%.1fs", effectiveOutputDuration))
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.75))
+                    .contentTransition(.numericText())
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .studioGlass(Capsule())
+        .animation(.smooth, value: effectiveOutputDuration)
+    }
 
-    private var antiZoomAndEngineCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private func specDisclosure(_ spec: VideoSpecification) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                    showsSpecDetails.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(spec.isPassthroughCompatible ? Theme.success : Theme.caution)
+                        .frame(width: 7, height: 7)
+                    Text([spec.resolutionTier, spec.codecName, spec.frameRateText, spec.isHDR ? "HDR" : nil]
+                        .compactMap { $0 }
+                        .joined(separator: "  ·  "))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.secondaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.tertiaryText)
+                        .rotationEffect(.degrees(showsSpecDetails ? 180 : 0))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(showsSpecDetails ? "收起原片信息" : "展开原片信息")
+
+            if showsSpecDetails {
+                VStack(spacing: 0) {
+                    specRow("分辨率", spec.resolutionText)
+                    specRow("编码", spec.codecName + (spec.isPassthroughCompatible ? " · 可直通" : " · 不可直通"))
+                    specRow("色彩", spec.colorSpaceLabel)
+                    specRow("帧率", "\(spec.frameRateText) · 约 \(spec.totalFramesEstimate) 帧")
+                    specRow("码率", String(format: "%.1f Mbps", spec.estimatedBitrateMbps))
+                    specRow("音轨", spec.audioSummary, isLast: true)
+                }
+                .padding(.horizontal, 14)
+                .background(Theme.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .transition(.asymmetric(
+                    insertion: .opacity.combined(with: .offset(y: -8)),
+                    removal: .opacity
+                ))
+            }
+        }
+    }
+
+    private func specRow(_ label: String, _ value: String, isLast: Bool = false) -> some View {
+        VStack(spacing: 0) {
             HStack {
-                Label("1:1 零缩放与实况引擎调校", systemImage: "wand.and.stars.inverse")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.92))
-
+                Text(label)
+                    .foregroundStyle(Theme.tertiaryText)
                 Spacer()
+                Text(value)
+                    .foregroundStyle(Theme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .font(.system(size: 13))
+            .padding(.vertical, 11)
+            if !isLast {
+                Rectangle().fill(Theme.separator).frame(height: 0.5)
+            }
+        }
+    }
 
+    // MARK: - Studio Card (duration & cover)
+
+    private func studioCard(_ spec: VideoSpecification) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Text("剪辑")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.primaryText)
+                Spacer()
+                GlassSegmented(
+                    items: StudioTab.allCases,
+                    selection: $studioTab,
+                    title: { $0.rawValue },
+                    icon: { $0.icon },
+                    compact: true
+                )
+            }
+
+            ZStack(alignment: .top) {
+                if studioTab == .duration {
+                    durationPane(spec)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(x: -16)),
+                            removal: .opacity.combined(with: .offset(x: -16))
+                        ))
+                } else {
+                    coverPane(spec)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .offset(x: 16)),
+                            removal: .opacity.combined(with: .offset(x: 16))
+                        ))
+                }
+            }
+            .animation(.spring(response: 0.42, dampingFraction: 0.88), value: studioTab)
+        }
+        .padding(20)
+        .studioGlass(RoundedRectangle(cornerRadius: 32, style: .continuous))
+    }
+
+    private func durationPane(_ spec: VideoSpecification) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if !spec.thumbnails.isEmpty {
+                FilmstripTrimmer(
+                    thumbnails: spec.thumbnails,
+                    duration: spec.durationSeconds,
+                    range: displayedRange,
+                    coverTime: displayedCoverTime,
+                    isEnabled: spec.durationSeconds > 0.3 && !isWorking,
+                    onChange: { handle, seconds in
+                        moveTrimHandle(handle, to: seconds, total: spec.durationSeconds)
+                    }
+                )
+            }
+
+            HStack(alignment: .firstTextBaseline) {
+                timeReadout(String(format: "%.2f", displayedRange.lowerBound), caption: "起点")
+                Spacer()
+                VStack(spacing: 2) {
+                    Text(String(format: "%.2f", effectiveOutputDuration))
+                        .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Theme.primaryText)
+                        .contentTransition(.numericText())
+                    Text("秒 · 实况时长")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.tertiaryText)
+                }
+                Spacer()
+                timeReadout(String(format: "%.2f", displayedRange.upperBound), caption: "终点", trailing: true)
+            }
+            .animation(.smooth(duration: 0.25), value: displayedRange)
+
+            presetBar(total: spec.durationSeconds)
+        }
+    }
+
+    private func timeReadout(_ value: String, caption: String, trailing: Bool = false) -> some View {
+        VStack(alignment: trailing ? .trailing : .leading, spacing: 2) {
+            Text(value)
+                .font(.system(size: 15, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(Theme.secondaryText)
+                .contentTransition(.numericText())
+            Text(caption)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.tertiaryText)
+        }
+    }
+
+    private func presetBar(total: Double) -> some View {
+        HStack(spacing: 6) {
+            ForEach(DurationPreset.allCases) { preset in
+                let isSelected = durationPreset == preset
+                Button {
+                    applyPreset(preset, total: total)
+                } label: {
+                    Text(preset.rawValue)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? Color.white : Theme.secondaryText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background {
+                            if isSelected {
+                                Capsule().fill(Theme.accent.opacity(0.9))
+                            } else {
+                                Capsule().fill(Theme.fill)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(PressableStyle())
+                .disabled(isWorking)
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: durationPreset)
+    }
+
+    private func coverPane(_ spec: VideoSpecification) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
+                coverThumbnail(spec)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(useCustomCoverTime ? "自选封面帧" : "片段首帧")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.primaryText)
+                        .contentTransition(.interpolate)
+                    Text(useCustomCoverTime
+                         ? String(format: "取自 %.2f 秒处", displayedCoverTime)
+                         : "与播放起点一致，过渡零跳帧")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.secondaryText)
+                        .contentTransition(.numericText())
+                    Text("\(coverFormat.rawValue) · \(apertureMode == .encodedPixels ? "1:1 编码像素" : "Clean Aperture")")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.tertiaryText)
+                        .padding(.top, 2)
+                }
+                Spacer(minLength: 0)
+            }
+
+            GlassSegmented(
+                items: [false, true],
+                selection: $useCustomCoverTime,
+                title: { $0 ? "自选帧" : "首帧" }
+            )
+            .onChange(of: useCustomCoverTime) { _, isCustom in
+                let start = displayedRange.lowerBound
+                if isCustom {
+                    customCoverTimeSeconds = start
+                }
+                Task { await updateCoverFramePreview(at: start) }
+            }
+
+            if useCustomCoverTime, !spec.thumbnails.isEmpty {
+                VStack(spacing: 14) {
+                    CoverScrubber(
+                        thumbnails: spec.thumbnails,
+                        duration: spec.durationSeconds,
+                        range: displayedRange,
+                        time: displayedCoverTime,
+                        loupeImage: coverPreviewImage,
+                        onScrub: { setCoverTime($0) }
+                    )
+
+                    HStack {
+                        frameStepButton(systemName: "backward.frame.fill", delta: -1, spec: spec)
+                        Spacer()
+                        Text(String(format: "%.3f s", displayedCoverTime))
+                            .font(.system(size: 14, weight: .medium, design: .rounded).monospacedDigit())
+                            .foregroundStyle(Theme.secondaryText)
+                            .contentTransition(.numericText())
+                        Spacer()
+                        frameStepButton(systemName: "forward.frame.fill", delta: 1, spec: spec)
+                    }
+                }
+                .transition(.opacity.combined(with: .offset(y: -6)))
+            }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.86), value: useCustomCoverTime)
+    }
+
+    private func coverThumbnail(_ spec: VideoSpecification) -> some View {
+        let image = coverPreviewImage ?? spec.thumbnails.first
+        return ZStack {
+            if let image {
+                Image(uiImage: UIImage(cgImage: image))
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity)
+                    .id(ObjectIdentifier(image))
+            } else {
+                Theme.fill
+            }
+        }
+        .frame(width: 92, height: 92)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.6)
+        )
+        .shadow(color: .black.opacity(0.3), radius: 10, y: 6)
+        .animation(.easeInOut(duration: 0.25), value: image.map { ObjectIdentifier($0) })
+    }
+
+    private func frameStepButton(systemName: String, delta: Double, spec: VideoSpecification) -> some View {
+        Button {
+            let step = 1.0 / max(1.0, spec.nominalFrameRate)
+            setCoverTime(displayedCoverTime + delta * step)
+        } label: {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.primaryText)
+                .frame(width: 20, height: 20)
+        }
+        .regularGlassButton()
+        .buttonRepeatBehavior(.enabled)
+        .accessibilityLabel(delta < 0 ? "上一帧" : "下一帧")
+    }
+
+    // MARK: - Engine Card
+
+    private var engineCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("实况引擎")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.primaryText)
+                Spacer()
                 Button {
                     showsAntiZoomPrincipleSheet = true
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "info.circle.fill")
-                        Text("防放大原理")
+                        Text("原理")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
                     }
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(.cyan)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Color.cyan.opacity(0.14), in: Capsule())
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.accentSoft)
                 }
+                .buttonStyle(.plain)
             }
 
-            // Toggle 1: Force revoke playback zoom
-            engineToggleRow(
-                icon: "arrow.up.left.and.arrow.down.right.circle.fill",
-                iconColor: .cyan,
-                title: "强制撤销实况播放默认放大 (1:1 原画比例)",
-                subtitle: "写入 QuickTime vitality-disabled 与零过渡分值，阻断 iOS PhotosPlayer 默认的 1.075x 播放缩放动画，与直接播放原视频完全一致。",
-                isOn: $disablePlaybackZoom
-            )
+            ZoomIllustration(isZoomDisabled: disablePlaybackZoom)
 
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-
-            // Toggle 2: Full frame rate playback intent
-            engineToggleRow(
-                icon: "gauge.with.dots.needle.67percent",
-                iconColor: .green,
-                title: "高帧率原速满帧播放 (60fps / 120fps)",
-                subtitle: "写入 full-frame-rate-playback-intent 标记，防止系统相册在回放高帧率实况时抽帧降速。",
-                isOn: $fullFrameRateIntent
-            )
-
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-
-            // Toggle 3: Keep original audio
-            engineToggleRow(
-                icon: includeAudio ? "speaker.wave.3.fill" : "speaker.slash.fill",
-                iconColor: includeAudio ? .purple : .gray,
-                title: "保留原视频声音",
-                subtitle: "AAC 音轨零重编码直通；若原视频为 PCM 等非 AAC 音轨，自动无损重封装视频并智能转码音频。",
-                isOn: $includeAudio
-            )
+            VStack(spacing: 0) {
+                EngineToggleRow(
+                    icon: "arrow.up.left.and.arrow.down.right",
+                    tint: Theme.accent,
+                    title: "撤销播放放大",
+                    detail: "长按播放时保持 1:1 原画比例",
+                    isOn: $disablePlaybackZoom,
+                    hapticsEnabled: hapticsEnabled
+                )
+                Rectangle().fill(Theme.separator).frame(height: 0.5).padding(.leading, 56)
+                EngineToggleRow(
+                    icon: "gauge.with.dots.needle.67percent",
+                    tint: Theme.success,
+                    title: "满帧率播放",
+                    detail: "60 / 120fps 回放不抽帧",
+                    isOn: $fullFrameRateIntent,
+                    hapticsEnabled: hapticsEnabled
+                )
+                Rectangle().fill(Theme.separator).frame(height: 0.5).padding(.leading, 56)
+                EngineToggleRow(
+                    icon: includeAudio ? "speaker.wave.2.fill" : "speaker.slash.fill",
+                    tint: Color(red: 0.74, green: 0.62, blue: 1.0),
+                    title: "保留原声",
+                    detail: "AAC 直通，其他格式转为 AAC-LC",
+                    isOn: $includeAudio,
+                    hapticsEnabled: hapticsEnabled
+                )
+            }
+            .background(Theme.fill, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
-        .padding(16)
-        .modifier(LiquidGlassCardModifier(cornerRadius: 24, tintOpacity: 0.10))
+        .padding(20)
+        .studioGlass(RoundedRectangle(cornerRadius: 32, style: .continuous))
     }
 
-    private func engineToggleRow(
-        icon: String,
-        iconColor: Color,
-        title: String,
-        subtitle: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(iconColor)
-                .frame(width: 34, height: 34)
-                .background(iconColor.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(.white)
-
-                Text(subtitle)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.68))
-                    .lineSpacing(2)
-            }
-
-            Spacer(minLength: 4)
-
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .tint(.cyan)
-        }
+    private var footnote: some View {
+        Text("压缩视频样本比特级写入配对 MOV，画质与原片一致。")
+            .font(.system(size: 12))
+            .foregroundStyle(Theme.tertiaryText)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
     }
 
-    // MARK: - Bottom Action Deck
+    // MARK: - Action Dock
 
-    private var bottomActionDeck: some View {
-        VStack(spacing: 12) {
-            if isWorking {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .tint(.cyan)
-                    Text(workingStatus)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.cyan.opacity(0.45), lineWidth: 1)
-                )
-            }
-
-            if let feedback {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: feedback.icon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(feedback.color)
-
-                    Text(feedback.text)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.92))
-
-                    Spacer()
-                }
-                .padding(14)
-                .background(feedback.color.opacity(0.16), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(feedback.color.opacity(0.45), lineWidth: 1)
-                )
-            }
-
-            // Primary Convert & Save to Photos button
-            Button {
-                Task { await convertAndSaveToPhotos() }
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "livephoto.badge.automatic")
-                        .font(.system(size: 19, weight: .bold))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("转换并存入系统相册")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                        Text(disablePlaybackZoom ? "1:1 原画直通 · 已禁用播放放大" : "原画直通 · 标准实况缩放")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.82))
-                    }
-                    Spacer()
-                    Image(systemName: "arrow.right.circle.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                }
-                .padding(.horizontal, 18)
-                .padding(.vertical, 15)
-                .background(
-                    LinearGradient(
-                        colors: source == nil || isWorking
-                            ? [Color.white.opacity(0.10), Color.white.opacity(0.06)]
-                            : [Color.cyan.opacity(0.75), Color.blue.opacity(0.70), Color.indigo.opacity(0.75)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [.white.opacity(0.75), .white.opacity(0.18)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1.2
-                        )
-                )
-                .shadow(color: source == nil ? .clear : Color.cyan.opacity(0.32), radius: 16, x: 0, y: 8)
-                .foregroundStyle(.white.opacity(source == nil || isWorking ? 0.45 : 1.0))
-            }
-            .disabled(source == nil || isWorking)
-
-            // Secondary actions: In-App Live Photo Preview & Export Raw Pair
-            if source != nil {
-                HStack(spacing: 10) {
+    private var actionDock: some View {
+        GlassGroup(spacing: 12) {
+            HStack(spacing: 12) {
+                if !isWorking {
                     Button {
                         Task { await convertForInAppPreviewOnly() }
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "hand.tap.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("生成实况并在 App 内预览")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
+                        Image(systemName: "livephoto.play")
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(Theme.primaryText)
+                            .frame(width: 30, height: 32)
+                    }
+                    .regularGlassButton()
+                    .accessibilityLabel("生成并在 App 内预览")
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+
+                Button {
+                    Task { await convertAndSaveToPhotos() }
+                } label: {
+                    primaryLabel
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.9)
-                        )
-                        .foregroundStyle(.white)
-                    }
-                    .disabled(isWorking)
+                        .frame(height: 32)
+                }
+                .prominentGlassButton()
+                .allowsHitTesting(!isWorking)
 
-                    if let files = generatedFiles {
-                        Button {
-                            shareItems = [files.photoURL, files.movieURL]
-                            showsShareSheet = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "square.and.arrow.up")
-                                    .font(.system(size: 14, weight: .semibold))
-                                Text("导出配对源文件")
-                                    .font(.system(size: 13, weight: .semibold))
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(0.24), lineWidth: 0.9)
-                            )
-                            .foregroundStyle(.white)
-                        }
-                        .disabled(isWorking)
+                if !isWorking, let files = generatedFiles {
+                    Button {
+                        shareItems = [files.photoURL, files.movieURL]
+                        showsShareSheet = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(Theme.primaryText)
+                            .frame(width: 30, height: 32)
                     }
+                    .regularGlassButton()
+                    .accessibilityLabel("导出配对源文件")
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
             }
+            .controlSize(.large)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .frame(maxWidth: Theme.maxContentWidth)
+        .frame(maxWidth: .infinity)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: isWorking)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: generatedFiles?.identifier)
+    }
+
+    @ViewBuilder
+    private var primaryLabel: some View {
+        ZStack {
+            if isWorking {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .tint(.white)
+                    Text(workingStatus)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                .transition(.blurReplace)
+            } else if justSaved {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .symbolEffect(.bounce, value: justSaved)
+                    Text("已存入相册")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .transition(.blurReplace)
+            } else {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text("存入相册")
+                        .font(.system(size: 16, weight: .semibold))
+                    Text(String(format: "%.1fs", effectiveOutputDuration))
+                        .font(.system(size: 13, weight: .medium).monospacedDigit())
+                        .opacity(0.7)
+                        .contentTransition(.numericText())
+                }
+                .transition(.blurReplace)
+            }
+        }
+        .foregroundStyle(.white)
+        .animation(.smooth(duration: 0.35), value: isWorking)
+        .animation(.smooth(duration: 0.35), value: justSaved)
+    }
+
+    // MARK: - Timeline Helpers
+
+    private func applyPreset(_ preset: DurationPreset, total: Double) {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            durationPreset = preset
+            switch preset {
+            case .full:
+                trimStartSeconds = 0.0
+                trimEndSeconds = total
+            case .threeSeconds, .fiveSeconds, .tenSeconds:
+                trimStartSeconds = 0.0
+                trimEndSeconds = min(preset.maxSeconds ?? total, total)
+            case .custom:
+                if trimEndSeconds <= trimStartSeconds {
+                    trimStartSeconds = 0.0
+                    trimEndSeconds = total
+                }
+            }
+        }
+        seekPlayer(to: displayedRange.lowerBound)
+    }
+
+    private func moveTrimHandle(_ handle: FilmstripTrimmer.Handle, to seconds: Double, total: Double) {
+        if durationPreset != .custom {
+            let current = displayedRange
+            trimStartSeconds = current.lowerBound
+            trimEndSeconds = current.upperBound
+            durationPreset = .custom
+        }
+        let minimumGap = 0.2
+        switch handle {
+        case .lower:
+            trimStartSeconds = max(0.0, min(seconds, trimEndSeconds - minimumGap))
+            seekPlayer(to: trimStartSeconds)
+        case .upper:
+            trimEndSeconds = min(total, max(seconds, trimStartSeconds + minimumGap))
+            seekPlayer(to: trimEndSeconds)
         }
     }
 
-    // MARK: - Settings Sheet & Anti-Zoom Technical Sheet
-
-    private var settingsSheetView: some View {
-        NavigationStack {
-            ZStack {
-                LiquidAmbientBackgroundView(
-                    palette: currentPalette,
-                    isAnimating: dynamicBackgroundMotion,
-                    isEnergetic: false
-                )
-                .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        // Cover Image Format & Aperture
-                        VStack(alignment: .leading, spacing: 14) {
-                            Label("封面图与画幅采样设置", systemImage: "photo.badge.checkmark")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("静态封面编码格式")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.8))
-
-                                Picker("静态封面编码格式", selection: $coverFormatRaw) {
-                                    ForEach(CoverImageFormat.allCases) { format in
-                                        Text(format.title).tag(format.rawValue)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                            }
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("封面画幅光圈采样模式 (Aperture Mode)")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.8))
-
-                                Picker("画幅光圈模式", selection: $apertureModeRaw) {
-                                    ForEach(CoverApertureMode.allCases) { mode in
-                                        Text(mode.title).tag(mode.rawValue)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-
-                                Text("「1:1 编码原始像素」会忽略视频容器中可能存在的 Clean Aperture 裁切框，直接按完整编码像素生成封面，避免封面与视频产生边缘微小缩放差。")
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(.white.opacity(0.65))
-                            }
-                        }
-                        .padding(16)
-                        .modifier(LiquidGlassCardModifier(cornerRadius: 22, tintOpacity: 0.12))
-
-                        // Liquid Glass & Background Transformation settings
-                        VStack(alignment: .leading, spacing: 14) {
-                            Label("液态玻璃与流光背景变换", systemImage: "sparkles.rectangle.stack.fill")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(.white)
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("背景流光主题")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.8))
-
-                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                    ForEach(AmbientTheme.allCases) { theme in
-                                        let isSelected = ambientTheme == theme
-                                        Button {
-                                            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-                                                ambientThemeRaw = theme.rawValue
-                                            }
-                                        } label: {
-                                            HStack(spacing: 8) {
-                                                Image(systemName: theme.icon)
-                                                    .foregroundStyle(isSelected ? .cyan : .white.opacity(0.75))
-                                                Text(theme.rawValue)
-                                                    .font(.system(size: 13, weight: .semibold))
-                                                    .foregroundStyle(.white)
-                                                Spacer()
-                                                if isSelected {
-                                                    Image(systemName: "checkmark.circle.fill")
-                                                        .foregroundStyle(.cyan)
-                                                }
-                                            }
-                                            .padding(12)
-                                            .background(
-                                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                    .fill(isSelected ? Color.cyan.opacity(0.24) : Color.white.opacity(0.08))
-                                            )
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                    .strokeBorder(isSelected ? Color.cyan : Color.white.opacity(0.15), lineWidth: 1)
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            Toggle(isOn: $dynamicBackgroundMotion) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("实时流体极光动态变换")
-                                        .font(.system(size: 13.5, weight: .semibold))
-                                        .foregroundStyle(.white)
-                                    Text("开启后背景色彩场会随时间及视频画面色调进行平滑液态演化。")
-                                        .font(.system(size: 11.5))
-                                        .foregroundStyle(.white.opacity(0.65))
-                                }
-                            }
-                            .tint(.cyan)
-                        }
-                        .padding(16)
-                        .modifier(LiquidGlassCardModifier(cornerRadius: 22, tintOpacity: 0.12))
-                    }
-                    .padding(18)
-                }
-            }
-            .navigationTitle("高级封装与界面设置")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") {
-                        showsSettingsSheet = false
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
-    }
-
-    private var antiZoomPrincipleSheetView: some View {
-        NavigationStack {
-            ZStack {
-                LiquidAmbientBackgroundView(
-                    palette: currentPalette,
-                    isAnimating: false,
-                    isEnergetic: false
-                )
-                .ignoresSafeArea()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label("为什么系统相册播放实况照片会默认放大？", systemImage: "magnifyingglass.circle.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.cyan)
-
-                            Text("在 iOS 系统底层框架 PhotosPlayer.framework (ISLivePhotoPlayer._updateScaleIfNeeded) 中，苹果为常规相机拍摄的实况照片硬编码了一个播放缩放逻辑：当长按触发实况回放且 supportsVitality 为 true 时，播放器会在 0.3 秒内将视频画面放大至 1.075 倍（即放大 7.5%），以掩盖相机防抖边缘裁切。")
-                                .font(.system(size: 13.5))
-                                .foregroundStyle(.white.opacity(0.88))
-                                .lineSpacing(4)
-                        }
-                        .padding(16)
-                        .modifier(LiquidGlassCardModifier(cornerRadius: 20, tintOpacity: 0.12))
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Label("本 App 如何从底层强制撤销该放大效果？", systemImage: "checkmark.shield.fill")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(.green)
-
-                            Text("1. 注入 QuickTime 级禁用活力缩放标记：\n在配对 MOV 容器层写入 mdta/com.apple.quicktime.live-photo.vitality-disabled = 1 与 transition-vitality-score.v1 = 0.0。当系统相册（PhotosFormats.PFMetadataMovie.hasVitality）读取到该标记时，会将 ISPlayerContent.supportsVitality 设为 false，从而使 ISLivePhotoPlayer 强制保持 scale = 1.0（完全不放大）。\n\n2. 1:1 原始编码像素封面采样：\n使用 AVAssetImageGenerator.ApertureMode.encodedPixels 提取首帧作为静态封面，消除 Clean Aperture 与原始像素尺寸不一致导致的过渡形变。")
-                                .font(.system(size: 13.5))
-                                .foregroundStyle(.white.opacity(0.88))
-                                .lineSpacing(4)
-                        }
-                        .padding(16)
-                        .modifier(LiquidGlassCardModifier(cornerRadius: 20, tintOpacity: 0.12))
-                    }
-                    .padding(18)
-                }
-            }
-            .navigationTitle("1:1 零缩放技术说明")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("知道了") {
-                        showsAntiZoomPrincipleSheet = false
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-        }
-        .preferredColorScheme(.dark)
+    private func setCoverTime(_ seconds: Double) {
+        let range = displayedRange
+        let upper = max(range.lowerBound, range.upperBound - 0.02)
+        let clamped = min(max(seconds, range.lowerBound), upper)
+        customCoverTimeSeconds = clamped
+        seekPlayer(to: clamped)
+        Task { await updateCoverFramePreview(at: clamped) }
     }
 
     // MARK: - Actions & Helpers
@@ -1466,8 +1105,28 @@ struct ContentView: View {
         guard let url = source?.url else { return }
         if let frame = await LivePhotoConverter.extractPreviewFrame(at: url, seconds: seconds, maximumDimension: 480) {
             coverPreviewImage = frame
-            withAnimation(.easeInOut(duration: 0.45)) {
-                activeAmbientPalette = LivePhotoConverter.extractAmbientPalette(from: frame)
+            setBackdrop(frame)
+        }
+    }
+
+    private func setBackdrop(_ image: CGImage?) {
+        backdropImage = image
+        backdropToken &+= 1
+    }
+
+    @MainActor
+    private func present(_ newFeedback: Feedback) {
+        feedback = newFeedback
+        if newFeedback.isError {
+            errorPulse += 1
+        } else {
+            successPulse += 1
+        }
+        let id = newFeedback.id
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(newFeedback.isError ? 6 : 4))
+            if feedback?.id == id {
+                withAnimation(.smooth(duration: 0.4)) { feedback = nil }
             }
         }
     }
@@ -1477,7 +1136,7 @@ struct ContentView: View {
         showsPhotoPicker = false
         switch result {
         case .success(let imported):
-            workingStatus = "正在解析视频编码、画幅与流光色彩…"
+            workingStatus = "正在解析视频…"
             do {
                 let spec = try await LivePhotoConverter.inspectVideo(at: imported.url)
                 player?.pause()
@@ -1489,24 +1148,25 @@ struct ContentView: View {
                 specification = spec
                 player = AVPlayer(url: imported.url)
                 stageMode = .video
+                studioTab = .duration
+                showsSpecDetails = false
+                justSaved = false
                 durationPreset = .full
                 trimStartSeconds = 0.0
                 trimEndSeconds = spec.durationSeconds
                 useCustomCoverTime = false
                 customCoverTimeSeconds = 0.0
                 coverPreviewImage = spec.thumbnails.first
-                withAnimation(.easeInOut(duration: 0.6)) {
-                    activeAmbientPalette = spec.ambientPalette
-                }
+                setBackdrop(spec.thumbnails.first)
                 isWorking = false
             } catch {
                 imported.remove()
                 isWorking = false
-                feedback = .error("无法解析所选视频：\(error.localizedDescription)")
+                present(.error("无法解析所选视频：\(error.localizedDescription)"))
             }
         case .failure(let error):
             isWorking = false
-            feedback = .error("无法导入视频：\(error.localizedDescription)")
+            present(.error("无法导入视频：\(error.localizedDescription)"))
         }
     }
 
@@ -1514,7 +1174,7 @@ struct ContentView: View {
     private func convertForInAppPreviewOnly() async {
         guard let source, !isWorking else { return }
         isWorking = true
-        workingStatus = "正在无损封装 1:1 实况资源对…"
+        workingStatus = "正在封装实况…"
         feedback = nil
         player?.pause()
         defer { isWorking = false }
@@ -1531,15 +1191,15 @@ struct ContentView: View {
 
             if let livePhoto = await loadPHLivePhoto(from: files) {
                 generatedLivePhoto = livePhoto
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                     stageMode = .livePhoto
                 }
-                feedback = .success("实况预览已就绪！可直接在上方长按画面测试 1:1 无放大播放。")
+                present(.success("实况预览已就绪", detail: "在画面上长按，检验播放是否保持 1:1。"))
             } else {
-                feedback = .success("实况配对文件已生成，可点击「导出配对源文件」或直接存入相册。")
+                present(.success("配对文件已生成", detail: "可导出源文件，或直接存入相册。"))
             }
         } catch {
-            feedback = .error("生成实况预览失败：\(error.localizedDescription)")
+            present(.error("生成实况预览失败：\(error.localizedDescription)"))
         }
     }
 
@@ -1547,7 +1207,7 @@ struct ContentView: View {
     private func convertAndSaveToPhotos() async {
         guard let source, !isWorking else { return }
         isWorking = true
-        workingStatus = "正在无损直通封装并写入系统相册…"
+        workingStatus = "正在写入相册…"
         feedback = nil
         player?.pause()
         defer { isWorking = false }
@@ -1555,7 +1215,7 @@ struct ContentView: View {
         do {
             let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
             guard status == .authorized || status == .limited else {
-                feedback = .error("请在 iPhone「设置 → 隐私与安全性 → 照片」中允许本 App 添加照片。")
+                present(.error("请在「设置 → 隐私与安全性 → 照片」中允许本 App 添加照片。"))
                 return
             }
 
@@ -1578,16 +1238,21 @@ struct ContentView: View {
 
             if let livePhoto = await loadPHLivePhoto(from: result) {
                 generatedLivePhoto = livePhoto
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
                     stageMode = .livePhoto
                 }
             }
 
-            let durationDesc = String(format: "%.2fs", result.outputDurationSeconds)
+            let durationDesc = String(format: "%.2f 秒", result.outputDurationSeconds)
             let zoomDesc = disablePlaybackZoom ? "1:1 零放大" : "标准缩放"
-            feedback = .success("已存入系统相册（时长 \(durationDesc) · \(zoomDesc)），可在「照片 → 实况照片」中查看！")
+            present(.success("已存入系统相册", detail: "\(durationDesc) · \(zoomDesc)"))
+            justSaved = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2.4))
+                justSaved = false
+            }
         } catch {
-            feedback = .error("转换或保存失败：\(error.localizedDescription)")
+            present(.error("转换或保存失败：\(error.localizedDescription)"))
         }
     }
 
@@ -1617,172 +1282,1018 @@ struct ContentView: View {
         }
         generatedLivePhoto = nil
     }
+}
 
-    private struct Feedback {
-        let text: String
-        let icon: String
-        let color: Color
+// MARK: - Feedback & Toast
 
-        static func success(_ text: String) -> Self {
-            Self(text: text, icon: "checkmark.seal.fill", color: .cyan)
-        }
+private struct Feedback: Equatable {
+    let id = UUID()
+    let title: String
+    let detail: String?
+    let isError: Bool
 
-        static func error(_ text: String) -> Self {
-            Self(text: text, icon: "exclamationmark.triangle.fill", color: .red)
-        }
+    var icon: String { isError ? "exclamationmark.circle.fill" : "checkmark.circle.fill" }
+    var color: Color { isError ? Theme.danger : Theme.success }
+
+    static func success(_ title: String, detail: String? = nil) -> Self {
+        Self(title: title, detail: detail, isError: false)
+    }
+
+    static func error(_ title: String) -> Self {
+        Self(title: title, detail: nil, isError: true)
     }
 }
 
-// MARK: - Dynamic Liquid Ambient Background View
-
-private struct LiquidAmbientBackgroundView: View {
-    let palette: [RGBAColor]
-    let isAnimating: Bool
-    let isEnergetic: Bool
+private struct ToastView: View {
+    let feedback: Feedback
+    let onDismiss: () -> Void
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !isAnimating)) { timeline in
-            let t = timeline.date.timeIntervalSinceReferenceDate * (isEnergetic ? 1.8 : 0.55)
-            Canvas { context, size in
-                let baseRect = CGRect(origin: .zero, size: size)
-                context.fill(
-                    Path(baseRect),
-                    with: .linearGradient(
-                        Gradient(colors: [
-                            Color(red: 0.03, green: 0.04, blue: 0.09),
-                            Color(red: 0.05, green: 0.05, blue: 0.12),
-                            Color(red: 0.02, green: 0.03, blue: 0.07)
-                        ]),
-                        startPoint: .zero,
-                        endPoint: CGPoint(x: size.width, y: size.height)
-                    )
-                )
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: feedback.icon)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(feedback.color)
+                .symbolEffect(.bounce, value: feedback.id)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(feedback.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let detail = feedback.detail {
+                    Text(detail)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .studioGlass(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .onTapGesture(perform: onDismiss)
+        .gesture(
+            DragGesture(minimumDistance: 8).onEnded { value in
+                if value.translation.height < -10 { onDismiss() }
+            }
+        )
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("轻点关闭")
+    }
+}
 
-                let maxDim = max(size.width, size.height)
-                for index in 0..<palette.count {
-                    let color = palette[index]
-                    let phase = Double(index) * 1.57 + t
-                    let cx = size.width * (0.5 + 0.34 * cos(phase * 0.73 + Double(index)))
-                    let cy = size.height * (0.45 + 0.36 * sin(phase * 0.61 + Double(index) * 0.8))
-                    let radius = maxDim * (0.48 + 0.08 * sin(phase * 1.1))
-                    let center = CGPoint(x: cx, y: cy)
+// MARK: - Settings
 
-                    let orbColor = Color(red: color.r, green: color.g, blue: color.b)
-                    let gradient = Gradient(stops: [
-                        .init(color: orbColor.opacity(0.62), location: 0.0),
-                        .init(color: orbColor.opacity(0.28), location: 0.45),
-                        .init(color: orbColor.opacity(0.0), location: 1.0)
-                    ])
-                    context.drawLayer { layer in
-                        layer.blendMode = .plusLighter
-                        layer.fill(
-                            Path(ellipseIn: CGRect(
-                                x: center.x - radius,
-                                y: center.y - radius,
-                                width: radius * 2,
-                                height: radius * 2
-                            )),
-                            with: .radialGradient(
-                                gradient,
-                                center: center,
-                                startRadius: 0,
-                                endRadius: radius
-                            )
-                        )
-                    }
+private struct SettingsView: View {
+    @Binding var coverFormatRaw: String
+    @Binding var apertureModeRaw: String
+    @Binding var backdropStyleRaw: String
+    @Binding var hapticsEnabled: Bool
+    let previewImage: CGImage?
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var appVersion: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return "\(version) (\(build))"
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    settingsHeader
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets())
                 }
 
-                // Liquid caustic specular ribbon
-                let ribbonY = size.height * (0.32 + 0.12 * sin(t * 0.5))
-                var ribbon = Path()
-                ribbon.move(to: CGPoint(x: 0, y: ribbonY))
-                ribbon.addCurve(
-                    to: CGPoint(x: size.width, y: ribbonY + 60 * cos(t * 0.4)),
-                    control1: CGPoint(x: size.width * 0.33, y: ribbonY - 90 * sin(t * 0.6)),
-                    control2: CGPoint(x: size.width * 0.66, y: ribbonY + 90 * cos(t * 0.5))
+                Section {
+                    ForEach(CoverImageFormat.allCases) { format in
+                        ChoiceRow(
+                            title: format == .jpeg ? "JPEG" : "HEIC",
+                            detail: format == .jpeg ? "100% 质量，兼容性最佳" : "高效编码，体积更小",
+                            isSelected: coverFormatRaw == format.rawValue
+                        ) {
+                            coverFormatRaw = format.rawValue
+                        }
+                    }
+                } header: {
+                    Text("封面格式")
+                }
+
+                Section {
+                    ForEach(CoverApertureMode.allCases) { mode in
+                        ChoiceRow(
+                            title: mode == .encodedPixels ? "1:1 编码像素" : "Clean Aperture",
+                            detail: mode == .encodedPixels ? "按完整编码像素采样，封面与视频严格对齐" : "遵循容器裁切框，与常规播放器一致",
+                            isSelected: apertureModeRaw == mode.rawValue
+                        ) {
+                            apertureModeRaw = mode.rawValue
+                        }
+                    }
+                } header: {
+                    Text("封面采样")
+                } footer: {
+                    Text("推荐使用「1:1 编码像素」，可避免封面与视频之间出现边缘微缩放。")
+                }
+
+                Section {
+                    HStack(spacing: 12) {
+                        ForEach(BackdropStyle.allCases) { style in
+                            BackdropOption(
+                                style: style,
+                                previewImage: previewImage,
+                                isSelected: backdropStyleRaw == style.rawValue
+                            ) {
+                                withAnimation(.smooth(duration: 0.4)) {
+                                    backdropStyleRaw = style.rawValue
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
+
+                    Toggle(isOn: $hapticsEnabled) {
+                        Label("触感反馈", systemImage: "hand.tap")
+                    }
+                } header: {
+                    Text("外观与交互")
+                }
+
+                Section {
+                    NavigationLink {
+                        AntiZoomExplainer()
+                    } label: {
+                        Label("1:1 零缩放是如何实现的", systemImage: "arrow.up.left.and.arrow.down.right")
+                    }
+                    NavigationLink {
+                        VerifyGuideView()
+                    } label: {
+                        Label("校验导出文件", systemImage: "checkmark.seal")
+                    }
+                    if let url = URL(string: "https://github.com/xyydys/livephoto-pro") {
+                        Link(destination: url) {
+                            HStack {
+                                Label("项目主页", systemImage: "chevron.left.forwardslash.chevron.right")
+                                Spacer()
+                                Image(systemName: "arrow.up.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("了解更多")
+                } footer: {
+                    Text("无损 · 原画 · 实况")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 18)
+                }
+            }
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+            .animation(.smooth(duration: 0.3), value: coverFormatRaw)
+            .animation(.smooth(duration: 0.3), value: apertureModeRaw)
+        }
+        .tint(Theme.accent)
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
+        .sensoryFeedback(trigger: coverFormatRaw) { _, _ in hapticsEnabled ? .selection : nil }
+        .sensoryFeedback(trigger: apertureModeRaw) { _, _ in hapticsEnabled ? .selection : nil }
+        .sensoryFeedback(trigger: backdropStyleRaw) { _, _ in hapticsEnabled ? .selection : nil }
+    }
+
+    private var settingsHeader: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Theme.accent, Color(red: 0.55, green: 0.42, blue: 0.95)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: "livephoto")
+                    .font(.system(size: 38, weight: .regular))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 76, height: 76)
+            .shadow(color: Theme.accent.opacity(0.4), radius: 16, y: 8)
+
+            Text("实况原画 Pro")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+            Text("版本 \(appVersion)")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+    }
+}
+
+private struct ChoiceRow: View {
+    let title: String
+    let detail: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "checkmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .opacity(isSelected ? 1 : 0)
+                    .scaleEffect(isSelected ? 1 : 0.4)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct BackdropOption: View {
+    let style: BackdropStyle
+    let previewImage: CGImage?
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    LinearGradient(
+                        colors: [Color(red: 0.08, green: 0.09, blue: 0.12), Color(red: 0.02, green: 0.02, blue: 0.04)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    if style == .ambience {
+                        if let previewImage {
+                            Image(uiImage: UIImage(cgImage: previewImage))
+                                .resizable()
+                                .scaledToFill()
+                                .blur(radius: 14)
+                                .opacity(0.7)
+                        } else {
+                            LinearGradient(
+                                colors: [Theme.accent.opacity(0.55), Color(red: 0.85, green: 0.5, blue: 0.6).opacity(0.4)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            .blur(radius: 10)
+                        }
+                    }
+                    VStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(.white.opacity(0.16))
+                            .frame(height: 26)
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .fill(.white.opacity(0.10))
+                            .frame(height: 14)
+                    }
+                    .padding(12)
+                }
+                .frame(height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(isSelected ? Theme.accent : Color.white.opacity(0.1), lineWidth: isSelected ? 2 : 0.6)
                 )
-                context.stroke(
-                    ribbon,
-                    with: .linearGradient(
-                        Gradient(colors: [
-                            .white.opacity(0.0),
-                            .white.opacity(0.10),
-                            .cyan.opacity(0.14),
-                            .white.opacity(0.0)
-                        ]),
-                        startPoint: CGPoint(x: 0, y: ribbonY),
-                        endPoint: CGPoint(x: size.width, y: ribbonY)
-                    ),
-                    lineWidth: 70
+
+                VStack(spacing: 2) {
+                    Text(style.rawValue)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isSelected ? Theme.accentSoft : .primary)
+                    Text(style.detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressableStyle())
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct VerifyGuideView: View {
+    var body: some View {
+        List {
+            Section {
+                Text("从配对源文件导出 MOV 后，可在电脑上运行项目附带的脚本，对比原片与导出文件的压缩视频包 SHA-256、时间戳、分辨率、方向与色彩参数。")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            }
+            Section {
+                Text("python3 scripts/verify-video.py source.mp4 exported-paired.mov")
+                    .font(.system(size: 13, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(.vertical, 4)
+            } header: {
+                Text("命令")
+            } footer: {
+                Text("退出码 0 表示压缩视频样本与几何属性完全一致。")
+            }
+        }
+        .navigationTitle("校验导出文件")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Anti-Zoom Explainer
+
+private struct AntiZoomExplainer: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                HStack(alignment: .top, spacing: 18) {
+                    comparison(title: "系统默认", factor: "1.075×", animated: true)
+                    comparison(title: "实况原画", factor: "1.000×", animated: false)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 8)
+
+                step(
+                    index: 1,
+                    title: "为什么会放大",
+                    body: "系统 PhotosPlayer 在实况照片支持 vitality 时，会在长按播放的 0.3 秒内把画面推进到 1.075 倍，用来掩盖相机防抖的边缘裁切。"
                 )
+                step(
+                    index: 2,
+                    title: "如何撤销",
+                    body: "在配对 MOV 中写入 live-photo.vitality-disabled = 1 与 transition-vitality-score = 0。系统读取后不再启用 vitality，播放器始终保持 1.0 倍。"
+                )
+                step(
+                    index: 3,
+                    title: "封面同样 1:1",
+                    body: "封面按完整编码像素采样，避免 Clean Aperture 与原始尺寸不一致造成的过渡形变。"
+                )
+            }
+            .padding(22)
+        }
+        .navigationTitle("1:1 零缩放")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func comparison(title: String, factor: String, animated: Bool) -> some View {
+        VStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.05))
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                ZoomingSample(isZooming: animated, highlighted: !animated)
+                    .padding(10)
+            }
+            .frame(width: 120, height: 150)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            Text(factor)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .foregroundStyle(animated ? Color.primary : Theme.accentSoft)
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func step(index: Int, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text("\(index)")
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Theme.accent, in: Circle())
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(body)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 }
 
-// MARK: - Liquid Glass ViewModifiers
+/// A miniature "photo" that loops the system's long-press push-in when `isZooming` is true.
+private struct ZoomingSample: View {
+    let isZooming: Bool
+    let highlighted: Bool
 
-private struct LiquidGlassCardModifier: ViewModifier {
-    let cornerRadius: CGFloat
-    let tintOpacity: Double
+    var body: some View {
+        sample
+            .phaseAnimator(isZooming ? [1.0, 1.0, 1.16, 1.16] : [1.0]) { content, scale in
+                content.scaleEffect(scale)
+            } animation: { _ in
+                .easeInOut(duration: 0.6)
+            }
+            .id(isZooming)
+    }
 
-    func body(content: Content) -> some View {
-        content
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(tintOpacity * 1.4),
-                                    Color.white.opacity(tintOpacity * 0.35),
-                                    Color.cyan.opacity(tintOpacity * 0.45)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .white.opacity(0.55), location: 0.0),
-                                .init(color: .white.opacity(0.14), location: 0.45),
-                                .init(color: .cyan.opacity(0.28), location: 0.8),
-                                .init(color: .white.opacity(0.32), location: 1.0)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1.1
+    private var sample: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: highlighted
+                            ? [Theme.accent, Color(red: 0.55, green: 0.42, blue: 0.95)]
+                            : [Color.white.opacity(0.35), Color.white.opacity(0.15)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-            )
-            .shadow(color: Color.black.opacity(0.28), radius: 20, x: 0, y: 10)
+                )
+            Image(systemName: "mountain.2.fill")
+                .font(.system(size: 26))
+                .foregroundStyle(.white.opacity(0.85))
+        }
     }
 }
 
-private struct LiquidGlassCircleModifier: ViewModifier {
+// MARK: - Engine Components
+
+private struct EngineToggleRow: View {
+    let icon: String
+    let tint: Color
+    let title: String
+    let detail: String
+    @Binding var isOn: Bool
+    let hapticsEnabled: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn.animation(.spring(response: 0.4, dampingFraction: 0.8))) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(isOn ? tint : Theme.tertiaryText)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 32, height: 32)
+                    .background((isOn ? tint : Color.white).opacity(isOn ? 0.16 : 0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Theme.primaryText)
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+            }
+        }
+        .tint(Theme.accent)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .sensoryFeedback(trigger: isOn) { _, _ in hapticsEnabled ? .impact(weight: .light) : nil }
+    }
+}
+
+/// Inline demonstration of the long-press zoom factor the current settings will produce.
+private struct ZoomIllustration: View {
+    let isZoomDisabled: Bool
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(0.04))
+                ZoomingSample(isZooming: !isZoomDisabled, highlighted: isZoomDisabled)
+                    .padding(7)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            }
+            .frame(width: 78, height: 58)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isZoomDisabled ? "1.000×" : "1.075×")
+                    .font(.system(size: 26, weight: .semibold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(isZoomDisabled ? Theme.accentSoft : Theme.primaryText)
+                    .contentTransition(.numericText(value: isZoomDisabled ? 1.0 : 1.075))
+                Text(isZoomDisabled ? "长按播放时画面保持原始比例" : "长按播放时系统会推进放大 7.5%")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.secondaryText)
+                    .contentTransition(.interpolate)
+            }
+            Spacer(minLength: 0)
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isZoomDisabled)
+    }
+}
+
+// MARK: - Liquid Glass Abstractions
+
+private extension View {
+    /// Native Liquid Glass on iOS 26 (Xcode 26 SDK); translucent material fallback elsewhere.
+    @ViewBuilder
+    func studioGlass<S: Shape>(_ shape: S, tint: Color? = nil, interactive: Bool = false) -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            let base: Glass = tint.map { Glass.regular.tint($0) } ?? Glass.regular
+            self.glassEffect(base.interactive(interactive), in: shape)
+        } else {
+            self.modifier(FallbackGlassModifier(shape: shape, tint: tint))
+        }
+        #else
+        self.modifier(FallbackGlassModifier(shape: shape, tint: tint))
+        #endif
+    }
+
+    @ViewBuilder
+    func prominentGlassButton() -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glassProminent).tint(Theme.accent)
+        } else {
+            self.buttonStyle(FallbackCapsuleButtonStyle(isProminent: true))
+        }
+        #else
+        self.buttonStyle(FallbackCapsuleButtonStyle(isProminent: true))
+        #endif
+    }
+
+    @ViewBuilder
+    func regularGlassButton() -> some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            self.buttonStyle(.glass)
+        } else {
+            self.buttonStyle(FallbackCapsuleButtonStyle(isProminent: false))
+        }
+        #else
+        self.buttonStyle(FallbackCapsuleButtonStyle(isProminent: false))
+        #endif
+    }
+
+    /// Staggered entrance: content rises softly out of a light blur.
+    func reveal(_ index: Int) -> some View {
+        modifier(RevealModifier(index: index))
+    }
+}
+
+private struct RevealModifier: ViewModifier {
+    let index: Int
+    @State private var isShown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content
-            .background(.ultraThinMaterial, in: Circle())
-            .overlay(
-                Circle()
-                    .strokeBorder(
+            .opacity(isShown ? 1 : 0)
+            .offset(y: isShown || reduceMotion ? 0 : 22)
+            .blur(radius: isShown || reduceMotion ? 0 : 10)
+            .scaleEffect(isShown || reduceMotion ? 1 : 0.98, anchor: .top)
+            .onAppear {
+                withAnimation(.spring(response: 0.7, dampingFraction: 0.86).delay(Double(index) * 0.07)) {
+                    isShown = true
+                }
+            }
+    }
+}
+
+/// Groups neighbouring glass shapes so they blend and morph together on iOS 26.
+private struct GlassGroup<Content: View>: View {
+    let spacing: CGFloat
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
+    }
+}
+
+private struct FallbackGlassModifier<S: Shape>: ViewModifier {
+    let shape: S
+    let tint: Color?
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                ZStack {
+                    shape.fill(.ultraThinMaterial)
+                    shape.fill(tint ?? Color.white.opacity(0.03))
+                }
+            }
+            .overlay {
+                shape.stroke(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.28), Color.white.opacity(0.04), Color.white.opacity(0.10)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 0.6
+                )
+            }
+            .shadow(color: .black.opacity(0.22), radius: 18, y: 10)
+    }
+}
+
+private struct FallbackCapsuleButtonStyle: ButtonStyle {
+    let isProminent: Bool
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background {
+                if isProminent {
+                    Capsule().fill(
                         LinearGradient(
-                            colors: [.white.opacity(0.6), .white.opacity(0.15)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
+                            colors: [Theme.accent, Color(red: 0.36, green: 0.50, blue: 0.96)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
+                } else {
+                    Capsule().fill(.ultraThinMaterial)
+                }
+            }
+            .overlay(Capsule().strokeBorder(Color.white.opacity(isProminent ? 0.3 : 0.14), lineWidth: 0.6))
+            .opacity(isEnabled ? 1.0 : 0.45)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+private struct PressableStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Reusable Components
+
+private struct GlassIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(Theme.primaryText)
+            .frame(width: 42, height: 42)
+            .contentShape(Circle())
+            .studioGlass(Circle(), interactive: true)
+    }
+}
+
+private struct GlassSegmented<Item: Hashable>: View {
+    let items: [Item]
+    @Binding var selection: Item
+    let title: (Item) -> String
+    var icon: ((Item) -> String)? = nil
+    var compact: Bool = false
+
+    @Namespace private var namespace
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.self) { item in
+                segment(item)
+            }
+        }
+        .padding(3)
+        .studioGlass(Capsule())
+    }
+
+    private func segment(_ item: Item) -> some View {
+        let isSelected = item == selection
+        return Button {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                selection = item
+            }
+        } label: {
+            HStack(spacing: 5) {
+                if let icon {
+                    Image(systemName: icon(item))
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(title(item))
+                    .font(.system(size: compact ? 13 : 14, weight: isSelected ? .semibold : .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? Color.white : Theme.secondaryText)
+            .padding(.horizontal, compact ? 12 : 10)
+            .padding(.vertical, compact ? 6 : 9)
+            .frame(maxWidth: compact ? nil : .infinity)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(Theme.accent.opacity(0.9))
+                        .matchedGeometryEffect(id: "segment", in: namespace)
+                        .shadow(color: Theme.accent.opacity(0.35), radius: 6, y: 2)
+                }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct FilmstripView: View {
+    let thumbnails: [CGImage]
+
+    var body: some View {
+        GeometryReader { geo in
+            let count = max(1, thumbnails.count)
+            let cellWidth = max(1, geo.size.width / CGFloat(count))
+            HStack(spacing: 0) {
+                ForEach(thumbnails.indices, id: \.self) { index in
+                    Image(uiImage: UIImage(cgImage: thumbnails[index]))
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: cellWidth, height: geo.size.height)
+                        .clipped()
+                }
+            }
+        }
+        .background(Theme.fill)
+    }
+}
+
+/// Filmstrip with two slim draggable handles bounding the Live Photo clip.
+private struct FilmstripTrimmer: View {
+    enum Handle { case lower, upper }
+
+    let thumbnails: [CGImage]
+    let duration: Double
+    let range: ClosedRange<Double>
+    let coverTime: Double
+    let isEnabled: Bool
+    let onChange: (Handle, Double) -> Void
+
+    @State private var activeHandle: Handle?
+
+    let stripHeight: CGFloat = 52
+    let handleWidth: CGFloat = 13
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let total = max(duration, 0.01)
+            let lowerX = CGFloat(range.lowerBound / total) * width
+            let upperX = CGFloat(range.upperBound / total) * width
+            let coverX = CGFloat(coverTime / total) * width
+            let frameX = min(lowerX, width - handleWidth * 2)
+            let frameWidth = max(handleWidth * 2, upperX - frameX)
+
+            ZStack(alignment: .topLeading) {
+                FilmstripView(thumbnails: thumbnails)
+                    .frame(width: width, height: stripHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: max(0, lowerX), height: stripHeight)
+                    .clipShape(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12, style: .continuous))
+                Rectangle()
+                    .fill(Color.black.opacity(0.55))
+                    .frame(width: max(0, width - upperX), height: stripHeight)
+                    .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 12, topTrailingRadius: 12, style: .continuous))
+                    .offset(x: upperX)
+
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.95), lineWidth: 2.5)
+                    .frame(width: frameWidth, height: stripHeight)
+                    .offset(x: frameX)
+                    .shadow(color: .black.opacity(0.3), radius: 4)
+
+                Capsule()
+                    .fill(Theme.accentSoft)
+                    .frame(width: 2, height: stripHeight - 12)
+                    .offset(x: coverX - 1, y: 6)
+                    .allowsHitTesting(false)
+
+                handleView(.lower, width: width, total: total)
+                    .position(x: frameX + handleWidth / 2, y: stripHeight / 2)
+                handleView(.upper, width: width, total: total)
+                    .position(x: frameX + frameWidth - handleWidth / 2, y: stripHeight / 2)
+            }
+            .coordinateSpace(.named("trimmer"))
+        }
+        .frame(height: stripHeight)
+        .opacity(isEnabled ? 1 : 0.55)
+        .sensoryFeedback(.selection, trigger: activeHandle)
+    }
+
+    private func handleView(_ handle: Handle, width: CGFloat, total: Double) -> some View {
+        let isActive = activeHandle == handle
+        return ZStack {
+            UnevenRoundedRectangle(
+                topLeadingRadius: handle == .lower ? 12 : 0,
+                bottomLeadingRadius: handle == .lower ? 12 : 0,
+                bottomTrailingRadius: handle == .upper ? 12 : 0,
+                topTrailingRadius: handle == .upper ? 12 : 0,
+                style: .continuous
             )
-            .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 4)
+            .fill(Color.white)
+            Capsule()
+                .fill(Color.black.opacity(0.35))
+                .frame(width: 2.5, height: 16)
+        }
+        .frame(width: handleWidth, height: stripHeight)
+        .scaleEffect(y: isActive ? 1.08 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isActive)
+        .frame(width: 44, height: stripHeight)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("trimmer"))
+                .onChanged { value in
+                    guard isEnabled else { return }
+                    if activeHandle != handle { activeHandle = handle }
+                    let x = min(max(0, value.location.x), width)
+                    onChange(handle, Double(x / width) * total)
+                }
+                .onEnded { _ in activeHandle = nil }
+        )
+        .accessibilityLabel(handle == .lower ? "截取起点" : "截取终点")
+    }
+}
+
+/// Filmstrip scrubber with a playhead and a floating loupe while dragging.
+private struct CoverScrubber: View {
+    let thumbnails: [CGImage]
+    let duration: Double
+    let range: ClosedRange<Double>
+    let time: Double
+    let loupeImage: CGImage?
+    let onScrub: (Double) -> Void
+
+    @State private var isDragging = false
+
+    let stripHeight: CGFloat = 44
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(1, geo.size.width)
+            let total = max(duration, 0.01)
+            let lowerX = CGFloat(range.lowerBound / total) * width
+            let upperX = CGFloat(range.upperBound / total) * width
+            let playX = min(max(0, CGFloat(time / total) * width), width)
+
+            ZStack(alignment: .topLeading) {
+                FilmstripView(thumbnails: thumbnails)
+                    .frame(width: width, height: stripHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                Rectangle()
+                    .fill(Color.black.opacity(0.62))
+                    .frame(width: max(0, lowerX), height: stripHeight)
+                Rectangle()
+                    .fill(Color.black.opacity(0.62))
+                    .frame(width: max(0, width - upperX), height: stripHeight)
+                    .offset(x: upperX)
+
+                Capsule()
+                    .fill(Color.white)
+                    .frame(width: 4, height: stripHeight + 12)
+                    .shadow(color: .black.opacity(0.45), radius: 3)
+                    .offset(x: min(max(0, playX - 2), width - 4), y: -6)
+
+                if isDragging, let loupeImage {
+                    Image(uiImage: UIImage(cgImage: loupeImage))
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 84, height: 84)
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color.white, lineWidth: 2)
+                        )
+                        .shadow(color: .black.opacity(0.45), radius: 12, y: 6)
+                        .offset(x: min(max(0, playX - 42), width - 84), y: -100)
+                        .transition(.scale(scale: 0.5, anchor: .bottom).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                }
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !isDragging {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { isDragging = true }
+                        }
+                        let x = min(max(0, value.location.x), width)
+                        let seconds = Double(x / width) * total
+                        onScrub(min(max(seconds, range.lowerBound), range.upperBound))
+                    }
+                    .onEnded { _ in
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { isDragging = false }
+                    }
+            )
+        }
+        .frame(height: stripHeight)
+        .padding(.vertical, 6)
+        .zIndex(1)
+        .accessibilityLabel("封面帧选择")
+    }
+}
+
+/// Live Photo glyph that gently breathes; the dotted ring drifts slowly.
+private struct BreathingLiveIcon: View {
+    @State private var rotation = 0.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [Theme.accent.opacity(0.28), .clear], center: .center, startRadius: 2, endRadius: 60))
+                .phaseAnimator([0.9, 1.1]) { content, scale in
+                    content.scaleEffect(scale)
+                } animation: { _ in .easeInOut(duration: 2.6) }
+            Circle()
+                .stroke(Color.white.opacity(0.85), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [0.1, 9]))
+                .padding(10)
+                .rotationEffect(.degrees(rotation))
+            Circle()
+                .stroke(Color.white.opacity(0.9), lineWidth: 2.5)
+                .padding(30)
+            Circle()
+                .fill(Color.white)
+                .padding(44)
+                .phaseAnimator([1.0, 0.86]) { content, scale in
+                    content.scaleEffect(scale)
+                } animation: { _ in .easeInOut(duration: 1.3) }
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.linear(duration: 30).repeatForever(autoreverses: false)) {
+                rotation = 360
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Backdrop
+
+/// Quiet backdrop: a deep gradient, optionally overlaid by a heavily diffused copy of the current cover frame.
+private struct AmbienceBackdrop: View {
+    let image: CGImage?
+    let token: Int
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 0.07, green: 0.075, blue: 0.10), Color(red: 0.02, green: 0.02, blue: 0.03)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            if let image {
+                Color.clear
+                    .overlay {
+                        Image(uiImage: UIImage(cgImage: image))
+                            .resizable()
+                            .scaledToFill()
+                            .blur(radius: 80, opaque: true)
+                            .saturation(1.2)
+                            .scaleEffect(1.2)
+                    }
+                    .clipped()
+                    .opacity(0.55)
+                    .id(token)
+                    .transition(.opacity)
+            }
+
+            LinearGradient(
+                colors: [Color.black.opacity(0.10), Color.black.opacity(0.35), Color.black.opacity(0.75)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .animation(.easeInOut(duration: 0.9), value: token)
+        .animation(.easeInOut(duration: 0.6), value: image == nil)
+        .ignoresSafeArea()
     }
 }
 
