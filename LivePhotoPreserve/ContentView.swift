@@ -1704,7 +1704,7 @@ private struct ZoomingSample: View {
 
     var body: some View {
         sample
-            .phaseAnimator(isZooming ? [1.0, 1.0, 1.16, 1.16] : [1.0]) { content, scale in
+            .phaseAnimator(isZooming ? [CGFloat(1.0), 1.0, 1.16, 1.16] : [CGFloat(1.0)]) { content, scale in
                 content.scaleEffect(scale)
             } animation: { _ in
                 .easeInOut(duration: 0.6)
@@ -2227,7 +2227,7 @@ private struct BreathingLiveIcon: View {
         ZStack {
             Circle()
                 .fill(RadialGradient(colors: [Theme.accent.opacity(0.28), .clear], center: .center, startRadius: 2, endRadius: 60))
-                .phaseAnimator([0.9, 1.1]) { content, scale in
+                .phaseAnimator([CGFloat(0.9), 1.1]) { content, scale in
                     content.scaleEffect(scale)
                 } animation: { _ in .easeInOut(duration: 2.6) }
             Circle()
@@ -2240,7 +2240,7 @@ private struct BreathingLiveIcon: View {
             Circle()
                 .fill(Color.white)
                 .padding(44)
-                .phaseAnimator([1.0, 0.86]) { content, scale in
+                .phaseAnimator([CGFloat(1.0), 0.86]) { content, scale in
                     content.scaleEffect(scale)
                 } animation: { _ in .easeInOut(duration: 1.3) }
         }
